@@ -46,7 +46,7 @@
   <div class="status">
     <p><strong>Sequential Review</strong></p>
     <p>Current Question: <span id="question">1</span> of 10</p>
-    <p>Attempts Retained: <span id="attempts">0</span></p>
+    <p>Effective Attempts: <span id="attempts">0</span></p>
   </div>
 
   <p>
@@ -79,12 +79,12 @@
 
     const deviceId = getDeviceId();
 
-    const db = new Dexie("JetSchoolhouseEventSyncTest", {
+    const db = new Dexie("JetSchoolhouseQuestionEventSyncTest", {
       addons: [dexieCloud]
     });
 
     db.version(1).stores({
-      answerEvents: "id"
+      questionAnswerEvents: "id"
     });
 
     db.cloud.configure({
@@ -93,20 +93,64 @@
     });
 
     async function getEvents() {
-      return await db.answerEvents.toArray();
+      return await db.questionAnswerEvents.toArray();
+    }
+
+    function getEffectiveAnswers(events) {
+      const effective = new Map();
+
+      for (const event of events) {
+        if (typeof event.questionNumber !== "number") {
+          continue;
+        }
+
+        const existing = effective.get(event.questionNumber);
+
+        if (!existing || event.timestamp > existing.timestamp) {
+          effective.set(event.questionNumber, event);
+        }
+      }
+
+      return effective;
+    }
+
+    async function getDerivedState() {
+      const events = await getEvents();
+      const effectiveAnswers = getEffectiveAnswers(events);
+
+      const answeredQuestions = [...effectiveAnswers.keys()]
+        .sort((a, b) => a - b);
+
+      let currentQuestion = 1;
+
+      while (
+        currentQuestion <= 10 &&
+        effectiveAnswers.has(currentQuestion)
+      ) {
+        currentQuestion++;
+      }
+
+      if (currentQuestion > 10) {
+        currentQuestion = 10;
+      }
+
+      return {
+        events,
+        effectiveAnswers,
+        answeredQuestions,
+        currentQuestion,
+        effectiveAttempts: effectiveAnswers.size
+      };
     }
 
     async function refreshScreen() {
-      const events = await getEvents();
-
-      const attemptsRetained = events.length;
-      const currentQuestion = Math.min(attemptsRetained + 1, 10);
+      const state = await getDerivedState();
 
       document.getElementById("question").textContent =
-        currentQuestion;
+        state.currentQuestion;
 
       document.getElementById("attempts").textContent =
-        attemptsRetained;
+        state.effectiveAttempts;
 
       document.getElementById("deviceId").textContent =
         deviceId;
@@ -116,14 +160,17 @@
     }
 
     async function recordAnswer(correct) {
+      const state = await getDerivedState();
+
       const event = {
         id: crypto.randomUUID(),
         deviceId: deviceId,
+        questionNumber: state.currentQuestion,
         correct: correct,
         timestamp: Date.now()
       };
 
-      await db.answerEvents.add(event);
+      await db.questionAnswerEvents.add(event);
 
       document.getElementById("message").textContent =
         correct

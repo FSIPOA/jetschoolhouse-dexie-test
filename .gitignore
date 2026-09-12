@@ -1,3 +1,4 @@
 dexie-cloud.key
 node_modules/
 cloud-progress*.json
+cloud-events*.json
