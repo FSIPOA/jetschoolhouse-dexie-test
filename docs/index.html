@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jet Schoolhouse - Dexie Sync Test</title>
+  <title>Jet Schoolhouse - Event Sync Test</title>
 
   <style>
     body {
@@ -29,14 +29,18 @@
       margin: 5px;
       font-size: 16px;
     }
+
+    .diagnostic {
+      margin-top: 25px;
+      font-size: 14px;
+    }
   </style>
-  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-nBEtpPus.js"></script>
+  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-Fopaz2ej.js"></script>
 </head>
 
 <body>
-
   <h1>Jet Schoolhouse</h1>
-  <h2>Dexie Cloud Sync Test</h2>
+  <h2>Dexie Cloud Event Sync Test - Prototype 2</h2>
 
   <p><strong>Pilot:</strong> Joe</p>
 
@@ -53,6 +57,9 @@
 
   <p id="message">Connecting to Dexie...</p>
 
+  <div class="diagnostic">
+    <p><strong>Device ID:</strong> <span id="deviceId"></span></p>
+  </div>
 
 </body>
 </html>

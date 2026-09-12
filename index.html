@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jet Schoolhouse - Dexie Sync Test</title>
+  <title>Jet Schoolhouse - Event Sync Test</title>
 
   <style>
     body {
@@ -29,13 +29,17 @@
       margin: 5px;
       font-size: 16px;
     }
+
+    .diagnostic {
+      margin-top: 25px;
+      font-size: 14px;
+    }
   </style>
 </head>
 
 <body>
-
   <h1>Jet Schoolhouse</h1>
-  <h2>Dexie Cloud Sync Test</h2>
+  <h2>Dexie Cloud Event Sync Test - Prototype 2</h2>
 
   <p><strong>Pilot:</strong> Joe</p>
 
@@ -52,17 +56,35 @@
 
   <p id="message">Connecting to Dexie...</p>
 
-  <script type="module">
+  <div class="diagnostic">
+    <p><strong>Device ID:</strong> <span id="deviceId"></span></p>
+  </div>
 
-  import Dexie from "dexie";
-  import dexieCloud from "dexie-cloud-addon";    
-   
- const db = new Dexie("JetSchoolhouseSyncTest", {
+  <script type="module">
+    import Dexie from "dexie";
+    import dexieCloud from "dexie-cloud-addon";
+
+    const DEVICE_ID_KEY = "jetschoolhouse_event_test_device_id";
+
+    function getDeviceId() {
+      let deviceId = localStorage.getItem(DEVICE_ID_KEY);
+
+      if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem(DEVICE_ID_KEY, deviceId);
+      }
+
+      return deviceId;
+    }
+
+    const deviceId = getDeviceId();
+
+    const db = new Dexie("JetSchoolhouseEventSyncTest", {
       addons: [dexieCloud]
     });
 
     db.version(1).stores({
-      progress: "id"
+      answerEvents: "id"
     });
 
     db.cloud.configure({
@@ -70,51 +92,43 @@
       requireAuth: true
     });
 
-    async function getState() {
-      let state = await db.progress.get("joe-g550-sequential");
-
-      if (!state) {
-        state = {
-          id: "joe-g550-sequential",
-          currentQuestion: 1,
-          attempts: []
-        };
-
-        await db.progress.put(state);
-      }
-
-      return state;
+    async function getEvents() {
+      return await db.answerEvents.toArray();
     }
 
     async function refreshScreen() {
-      const state = await getState();
+      const events = await getEvents();
+
+      const attemptsRetained = events.length;
+      const currentQuestion = Math.min(attemptsRetained + 1, 10);
 
       document.getElementById("question").textContent =
-        state.currentQuestion;
+        currentQuestion;
 
       document.getElementById("attempts").textContent =
-        state.attempts.length;
+        attemptsRetained;
+
+      document.getElementById("deviceId").textContent =
+        deviceId;
 
       document.getElementById("message").textContent =
         "Dexie database ready.";
     }
 
     async function recordAnswer(correct) {
-      const state = await getState();
-
-      state.attempts.push({
+      const event = {
+        id: crypto.randomUUID(),
+        deviceId: deviceId,
         correct: correct,
         timestamp: Date.now()
-      });
+      };
 
-      if (state.currentQuestion < 10) {
-        state.currentQuestion++;
-      }
-
-      await db.progress.put(state);
+      await db.answerEvents.add(event);
 
       document.getElementById("message").textContent =
-        correct ? "Correct answer recorded." : "Wrong answer recorded.";
+        correct
+          ? "Correct answer event recorded."
+          : "Wrong answer event recorded.";
 
       await refreshScreen();
     }
@@ -127,6 +141,5 @@
 
     await refreshScreen();
   </script>
-
 </body>
 </html>
