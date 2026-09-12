@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jet Schoolhouse - Dexie Sync Test</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 700px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+
+    h1 {
+      margin-bottom: 5px;
+    }
+
+    .status {
+      border: 1px solid #999;
+      padding: 15px;
+      margin-top: 25px;
+      border-radius: 8px;
+    }
+
+    button {
+      padding: 10px 18px;
+      margin: 5px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>Jet Schoolhouse</h1>
+  <h2>Dexie Cloud Sync Test</h2>
+
+  <p><strong>Pilot:</strong> Joe</p>
+
+  <div class="status">
+    <p><strong>Sequential Review</strong></p>
+    <p>Current Question: <span id="question">1</span> of 10</p>
+    <p>Attempts Retained: <span id="attempts">0</span></p>
+  </div>
+
+  <p>
+    <button id="correctButton">Correct Answer</button>
+    <button id="wrongButton">Wrong Answer</button>
+  </p>
+
+  <p id="message">Connecting to Dexie...</p>
+
+  <script type="module">
+
+  import Dexie from "dexie";
+  import dexieCloud from "dexie-cloud-addon";    
+   
+ const db = new Dexie("JetSchoolhouseSyncTest", {
+      addons: [dexieCloud]
+    });
+
+    db.version(1).stores({
+      progress: "id"
+    });
+
+    db.cloud.configure({
+      databaseUrl: "https://zenj0t5lt.dexie.cloud",
+      requireAuth: true
+    });
+
+    async function getState() {
+      let state = await db.progress.get("joe-g550-sequential");
+
+      if (!state) {
+        state = {
+          id: "joe-g550-sequential",
+          currentQuestion: 1,
+          attempts: []
+        };
+
+        await db.progress.put(state);
+      }
+
+      return state;
+    }
+
+    async function refreshScreen() {
+      const state = await getState();
+
+      document.getElementById("question").textContent =
+        state.currentQuestion;
+
+      document.getElementById("attempts").textContent =
+        state.attempts.length;
+
+      document.getElementById("message").textContent =
+        "Dexie database ready.";
+    }
+
+    async function recordAnswer(correct) {
+      const state = await getState();
+
+      state.attempts.push({
+        correct: correct,
+        timestamp: Date.now()
+      });
+
+      if (state.currentQuestion < 10) {
+        state.currentQuestion++;
+      }
+
+      await db.progress.put(state);
+
+      document.getElementById("message").textContent =
+        correct ? "Correct answer recorded." : "Wrong answer recorded.";
+
+      await refreshScreen();
+    }
+
+    document.getElementById("correctButton")
+      .addEventListener("click", () => recordAnswer(true));
+
+    document.getElementById("wrongButton")
+      .addEventListener("click", () => recordAnswer(false));
+
+    await refreshScreen();
+  </script>
+
+</body>
+</html>
