@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jet Schoolhouse - Dexie Sync Test</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 700px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+
+    h1 {
+      margin-bottom: 5px;
+    }
+
+    .status {
+      border: 1px solid #999;
+      padding: 15px;
+      margin-top: 25px;
+      border-radius: 8px;
+    }
+
+    button {
+      padding: 10px 18px;
+      margin: 5px;
+      font-size: 16px;
+    }
+  </style>
+  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-nBEtpPus.js"></script>
+</head>
+
+<body>
+
+  <h1>Jet Schoolhouse</h1>
+  <h2>Dexie Cloud Sync Test</h2>
+
+  <p><strong>Pilot:</strong> Joe</p>
+
+  <div class="status">
+    <p><strong>Sequential Review</strong></p>
+    <p>Current Question: <span id="question">1</span> of 10</p>
+    <p>Attempts Retained: <span id="attempts">0</span></p>
+  </div>
+
+  <p>
+    <button id="correctButton">Correct Answer</button>
+    <button id="wrongButton">Wrong Answer</button>
+  </p>
+
+  <p id="message">Connecting to Dexie...</p>
+
+
+</body>
+</html>
