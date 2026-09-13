@@ -45,7 +45,7 @@
 
   <div class="status">
     <p><strong>Sequential Review</strong></p>
-    <p>Current Question: <span id="question">1</span> of 10</p>
+    <p>Current Position: <span id="question">1</span> of 10</p>
     <p>Effective Attempts: <span id="attempts">0</span></p>
   </div>
 
@@ -60,6 +60,7 @@
   <div class="diagnostic">
     <p><strong>Device ID:</strong> <span id="deviceId"></span></p>
     <p><strong>Active Review ID:</strong> <span id="reviewId"></span></p>
+    <p><strong>Question ID:</strong> <span id="questionId"></span></p>
   </div>
 
   <script type="module">
@@ -71,6 +72,35 @@
 
     const INITIAL_REVIEW_ID =
       "initial-review";
+
+    const TEST_QUESTION_IDS =
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    function buildQuestionOrder() {
+      const questions =
+        TEST_QUESTION_IDS.slice();
+
+      for (
+        let i = questions.length - 1;
+        i > 0;
+        i--
+      ) {
+        const j =
+          Math.floor(
+            Math.random() * (i + 1)
+          );
+
+        [
+          questions[i],
+          questions[j]
+        ] = [
+          questions[j],
+          questions[i]
+        ];
+      }
+
+      return questions;
+    }
 
     function getDeviceId() {
       let deviceId = localStorage.getItem(DEVICE_ID_KEY);
@@ -85,7 +115,7 @@
 
     const deviceId = getDeviceId();
 
-    let displayedQuestion = 1;
+    let displayedQuestionId = 1;
     let displayedReviewId = INITIAL_REVIEW_ID;
     let displayedReviewGeneration = 0;
 
@@ -118,7 +148,9 @@
         parentReviewId: null,
         generation: 0,
         deviceId: "system",
-        createdAt: 0
+        createdAt: 0,
+        questions:
+          TEST_QUESTION_IDS.slice()
       };
 
       for (const event of reviewEvents) {
@@ -180,25 +212,40 @@
       const effectiveAnswers =
         getEffectiveAnswers(activeReviewAnswers);
 
-      let currentQuestion = 1;
+      const questionOrder =
+        Array.isArray(activeReview.questions)
+          ? activeReview.questions
+          : TEST_QUESTION_IDS;
+
+      let currentPosition = 0;
 
       while (
-        currentQuestion <= 10 &&
-        effectiveAnswers.has(currentQuestion)
+        currentPosition < questionOrder.length &&
+        effectiveAnswers.has(
+          questionOrder[currentPosition]
+        )
       ) {
-        currentQuestion++;
+        currentPosition++;
       }
 
-      if (currentQuestion > 10) {
-        currentQuestion = 10;
+      if (
+        currentPosition >= questionOrder.length
+      ) {
+        currentPosition =
+          questionOrder.length - 1;
       }
+
+      const currentQuestionId =
+        questionOrder[currentPosition];
 
       return {
         activeReview,
         answerEvents,
         activeReviewAnswers,
         effectiveAnswers,
-        currentQuestion,
+        questionOrder,
+        currentPosition,
+        currentQuestionId,
         effectiveAttempts: effectiveAnswers.size
       };
     }
@@ -206,8 +253,8 @@
     async function refreshScreen() {
       const state = await getDerivedState();
 
-      displayedQuestion =
-        state.currentQuestion;
+      displayedQuestionId =
+        state.currentQuestionId;
 
       displayedReviewId =
         state.activeReview.reviewId;
@@ -216,7 +263,12 @@
         state.activeReview.generation;
 
       document.getElementById("question")
-        .textContent = displayedQuestion;
+        .textContent =
+          state.currentPosition + 1;
+
+      document.getElementById("questionId")
+        .textContent =
+          displayedQuestionId;
 
       document.getElementById("attempts")
         .textContent = state.effectiveAttempts;
@@ -233,7 +285,7 @@
 
     async function recordAnswer(correct) {
       const questionBeingAnswered =
-        displayedQuestion;
+        displayedQuestionId;
 
       const reviewBeingAnswered =
         displayedReviewId;
@@ -274,7 +326,8 @@
         parentReviewId: parentReviewId,
         generation: parentGeneration + 1,
         deviceId: deviceId,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        questions: buildQuestionOrder()
       });
 
       document.getElementById("message")
