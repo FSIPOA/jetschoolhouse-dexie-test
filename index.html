@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jet Schoolhouse - Event Sync Test</title>
+  <title>Jet Schoolhouse - Reset Sync Test</title>
 
   <style>
     body {
@@ -39,7 +39,7 @@
 
 <body>
   <h1>Jet Schoolhouse</h1>
-  <h2>Dexie Cloud Event Sync Test - Prototype 2</h2>
+  <h2>Dexie Cloud Reset / Pass Isolation Test - Prototype 3</h2>
 
   <p><strong>Pilot:</strong> Joe</p>
 
@@ -52,19 +52,25 @@
   <p>
     <button id="correctButton">Correct Answer</button>
     <button id="wrongButton">Wrong Answer</button>
+    <button id="startOverButton">Start Over</button>
   </p>
 
   <p id="message">Connecting to Dexie...</p>
 
   <div class="diagnostic">
     <p><strong>Device ID:</strong> <span id="deviceId"></span></p>
+    <p><strong>Active Review ID:</strong> <span id="reviewId"></span></p>
   </div>
 
   <script type="module">
     import Dexie, { liveQuery } from "dexie";
     import dexieCloud from "dexie-cloud-addon";
 
-    const DEVICE_ID_KEY = "jetschoolhouse_event_test_device_id";
+    const DEVICE_ID_KEY =
+      "jetschoolhouse_reset_test_device_id";
+
+    const INITIAL_REVIEW_ID =
+      "initial-review";
 
     function getDeviceId() {
       let deviceId = localStorage.getItem(DEVICE_ID_KEY);
@@ -80,13 +86,16 @@
     const deviceId = getDeviceId();
 
     let displayedQuestion = 1;
+    let displayedReviewId = INITIAL_REVIEW_ID;
+    let displayedReviewGeneration = 0;
 
-    const db = new Dexie("JetSchoolhouseQuestionEventSyncTest", {
+    const db = new Dexie("JetSchoolhouseResetSyncTest", {
       addons: [dexieCloud]
     });
 
     db.version(1).stores({
-      questionAnswerEvents: "id"
+      reviewPassEvents: "id",
+      reviewAnswerEvents: "id"
     });
 
     db.cloud.configure({
@@ -94,8 +103,39 @@
       requireAuth: true
     });
 
-    async function getEvents() {
-      return await db.questionAnswerEvents.toArray();
+    async function getReviewEvents() {
+      return await db.reviewPassEvents.toArray();
+    }
+
+    async function getAnswerEvents() {
+      return await db.reviewAnswerEvents.toArray();
+    }
+
+    function chooseActiveReview(reviewEvents) {
+      let active = {
+        id: INITIAL_REVIEW_ID,
+        reviewId: INITIAL_REVIEW_ID,
+        parentReviewId: null,
+        generation: 0,
+        deviceId: "system",
+        createdAt: 0
+      };
+
+      for (const event of reviewEvents) {
+        if (event.generation > active.generation) {
+          active = event;
+          continue;
+        }
+
+        if (
+          event.generation === active.generation &&
+          event.id > active.id
+        ) {
+          active = event;
+        }
+      }
+
+      return active;
     }
 
     function getEffectiveAnswers(events) {
@@ -106,9 +146,17 @@
           continue;
         }
 
-        const existing = effective.get(event.questionNumber);
+        const existing =
+          effective.get(event.questionNumber);
 
-        if (!existing || event.timestamp > existing.timestamp) {
+        if (
+          !existing ||
+          event.timestamp > existing.timestamp ||
+          (
+            event.timestamp === existing.timestamp &&
+            event.id > existing.id
+          )
+        ) {
           effective.set(event.questionNumber, event);
         }
       }
@@ -117,11 +165,20 @@
     }
 
     async function getDerivedState() {
-      const events = await getEvents();
-      const effectiveAnswers = getEffectiveAnswers(events);
+      const reviewEvents = await getReviewEvents();
+      const answerEvents = await getAnswerEvents();
 
-      const answeredQuestions = [...effectiveAnswers.keys()]
-        .sort((a, b) => a - b);
+      const activeReview =
+        chooseActiveReview(reviewEvents);
+
+      const activeReviewAnswers =
+        answerEvents.filter(
+          event =>
+            event.reviewId === activeReview.reviewId
+        );
+
+      const effectiveAnswers =
+        getEffectiveAnswers(activeReviewAnswers);
 
       let currentQuestion = 1;
 
@@ -137,9 +194,10 @@
       }
 
       return {
-        events,
+        activeReview,
+        answerEvents,
+        activeReviewAnswers,
         effectiveAnswers,
-        answeredQuestions,
         currentQuestion,
         effectiveAttempts: effectiveAnswers.size
       };
@@ -148,56 +206,118 @@
     async function refreshScreen() {
       const state = await getDerivedState();
 
-      displayedQuestion = state.currentQuestion;
+      displayedQuestion =
+        state.currentQuestion;
 
-      document.getElementById("question").textContent =
-        displayedQuestion;
+      displayedReviewId =
+        state.activeReview.reviewId;
 
-      document.getElementById("attempts").textContent =
-        state.effectiveAttempts;
+      displayedReviewGeneration =
+        state.activeReview.generation;
 
-      document.getElementById("deviceId").textContent =
-        deviceId;
+      document.getElementById("question")
+        .textContent = displayedQuestion;
 
-      document.getElementById("message").textContent =
-        "Dexie database ready.";
+      document.getElementById("attempts")
+        .textContent = state.effectiveAttempts;
+
+      document.getElementById("deviceId")
+        .textContent = deviceId;
+
+      document.getElementById("reviewId")
+        .textContent = displayedReviewId;
+
+      document.getElementById("message")
+        .textContent = "Dexie database ready.";
     }
 
     async function recordAnswer(correct) {
-      const questionBeingAnswered = displayedQuestion;
+      const questionBeingAnswered =
+        displayedQuestion;
+
+      const reviewBeingAnswered =
+        displayedReviewId;
 
       const event = {
         id: crypto.randomUUID(),
         deviceId: deviceId,
+        reviewId: reviewBeingAnswered,
         questionNumber: questionBeingAnswered,
         correct: correct,
         timestamp: Date.now()
       };
 
-      await db.questionAnswerEvents.add(event);
+      await db.reviewAnswerEvents.add(event);
 
-      document.getElementById("message").textContent =
-        correct
-          ? "Correct answer event recorded."
-          : "Wrong answer event recorded.";
+      document.getElementById("message")
+        .textContent =
+          correct
+            ? "Correct answer event recorded."
+            : "Wrong answer event recorded.";
+
+      await refreshScreen();
+    }
+
+    async function startOver() {
+      const parentReviewId =
+        displayedReviewId;
+
+      const parentGeneration =
+        displayedReviewGeneration;
+
+      const newReviewId =
+        crypto.randomUUID();
+
+      await db.reviewPassEvents.add({
+        id: newReviewId,
+        reviewId: newReviewId,
+        parentReviewId: parentReviewId,
+        generation: parentGeneration + 1,
+        deviceId: deviceId,
+        createdAt: Date.now()
+      });
+
+      document.getElementById("message")
+        .textContent =
+          "New Sequential Review started.";
 
       await refreshScreen();
     }
 
     document.getElementById("correctButton")
-      .addEventListener("click", () => recordAnswer(true));
+      .addEventListener(
+        "click",
+        () => recordAnswer(true)
+      );
 
     document.getElementById("wrongButton")
-      .addEventListener("click", () => recordAnswer(false));
+      .addEventListener(
+        "click",
+        () => recordAnswer(false)
+      );
 
-    const eventSubscription = liveQuery(
-      () => db.questionAnswerEvents.toArray()
+    document.getElementById("startOverButton")
+      .addEventListener(
+        "click",
+        () => startOver()
+      );
+
+    liveQuery(
+      async () => ({
+        reviews:
+          await db.reviewPassEvents.toArray(),
+        answers:
+          await db.reviewAnswerEvents.toArray()
+      })
     ).subscribe({
       next: () => {
         refreshScreen();
       },
       error: (error) => {
-        console.error("Live event subscription error:", error);
+        console.error(
+          "Live review subscription error:",
+          error
+        );
       }
     });
 
