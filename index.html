@@ -39,19 +39,22 @@
 
 <body>
   <h1>Jet Schoolhouse</h1>
-  <h2>Dexie Cloud Reset / Pass Isolation Test - Prototype 3</h2>
+  <h2>Dexie Cloud Real Sequential Pass Test - Prototype 4</h2>
 
   <p><strong>Pilot:</strong> Joe</p>
 
   <div class="status">
     <p><strong>Sequential Review</strong></p>
     <p>Current Position: <span id="question">1</span> of 10</p>
-    <p>Effective Attempts: <span id="attempts">0</span></p>
+    <p>Resolved Questions: <span id="attempts">0</span></p>
+    <p>Question State: <span id="questionState">Unanswered</span></p>
+    <p>Attempts on This Question: <span id="questionAttempts">0</span></p>
   </div>
 
   <p>
     <button id="correctButton">Correct Answer</button>
     <button id="wrongButton">Wrong Answer</button>
+    <button id="nextButton" style="display:none;">Next Question</button>
     <button id="startOverButton">Start Over</button>
   </p>
 
@@ -119,13 +122,14 @@
     let displayedReviewId = INITIAL_REVIEW_ID;
     let displayedReviewGeneration = 0;
 
-    const db = new Dexie("JetSchoolhouseResetSyncTest", {
+    const db = new Dexie("JetSchoolhouseRealSequentialPassTest", {
       addons: [dexieCloud]
     });
 
     db.version(1).stores({
-      reviewPassEvents: "id",
-      reviewAnswerEvents: "id"
+      sequentialPassEvents: "id",
+      sequentialAttemptEvents: "id",
+      sequentialAdvanceEvents: "id"
     });
 
     db.cloud.configure({
@@ -134,11 +138,15 @@
     });
 
     async function getReviewEvents() {
-      return await db.reviewPassEvents.toArray();
+      return await db.sequentialPassEvents.toArray();
     }
 
     async function getAnswerEvents() {
-      return await db.reviewAnswerEvents.toArray();
+      return await db.sequentialAttemptEvents.toArray();
+    }
+
+    async function getAdvanceEvents() {
+      return await db.sequentialAdvanceEvents.toArray();
     }
 
     function chooseActiveReview(reviewEvents) {
@@ -170,35 +178,74 @@
       return active;
     }
 
-    function getEffectiveAnswers(events) {
-      const effective = new Map();
+    function sortEvents(events) {
+      return events.slice().sort((a, b) => {
+        if (a.timestamp !== b.timestamp) {
+          return a.timestamp - b.timestamp;
+        }
 
-      for (const event of events) {
-        if (typeof event.questionNumber !== "number") {
+        return a.id.localeCompare(b.id);
+      });
+    }
+
+    function deriveQuestionState(events) {
+      const ordered =
+        sortEvents(events);
+
+      let attemptCount = 0;
+      let wrongCount = 0;
+      let resolved = false;
+      let isCorrect = null;
+
+      for (const event of ordered) {
+        if (resolved) {
           continue;
         }
 
-        const existing =
-          effective.get(event.questionNumber);
+        attemptCount++;
 
-        if (
-          !existing ||
-          event.timestamp > existing.timestamp ||
-          (
-            event.timestamp === existing.timestamp &&
-            event.id > existing.id
-          )
-        ) {
-          effective.set(event.questionNumber, event);
+        if (event.correct) {
+          resolved = true;
+          isCorrect = true;
+        } else {
+          wrongCount++;
+
+          if (wrongCount >= 3) {
+            resolved = true;
+            isCorrect = false;
+          }
         }
       }
 
-      return effective;
+      return {
+        attemptCount,
+        wrongCount,
+        resolved,
+        isCorrect
+      };
+    }
+
+    function hasAdvanceEvent(
+      advanceEvents,
+      reviewId,
+      questionNumber
+    ) {
+      return advanceEvents.some(
+        event =>
+          event.reviewId === reviewId &&
+          event.questionNumber === questionNumber
+      );
     }
 
     async function getDerivedState() {
-      const reviewEvents = await getReviewEvents();
-      const answerEvents = await getAnswerEvents();
+      const reviewEvents =
+        await getReviewEvents();
+
+      const answerEvents =
+        await getAnswerEvents();
+
+      const advanceEvents =
+        await getAdvanceEvents();
 
       const activeReview =
         chooseActiveReview(reviewEvents);
@@ -209,8 +256,11 @@
             event.reviewId === activeReview.reviewId
         );
 
-      const effectiveAnswers =
-        getEffectiveAnswers(activeReviewAnswers);
+      const activeReviewAdvances =
+        advanceEvents.filter(
+          event =>
+            event.reviewId === activeReview.reviewId
+        );
 
       const questionOrder =
         Array.isArray(activeReview.questions)
@@ -220,33 +270,59 @@
       let currentPosition = 0;
 
       while (
-        currentPosition < questionOrder.length &&
-        effectiveAnswers.has(
+        currentPosition <
+          questionOrder.length - 1 &&
+        hasAdvanceEvent(
+          activeReviewAdvances,
+          activeReview.reviewId,
           questionOrder[currentPosition]
         )
       ) {
         currentPosition++;
       }
 
-      if (
-        currentPosition >= questionOrder.length
-      ) {
-        currentPosition =
-          questionOrder.length - 1;
-      }
-
       const currentQuestionId =
         questionOrder[currentPosition];
+
+      const currentQuestionEvents =
+        activeReviewAnswers.filter(
+          event =>
+            event.questionNumber ===
+              currentQuestionId
+        );
+
+      const currentQuestionState =
+        deriveQuestionState(
+          currentQuestionEvents
+        );
+
+      const resolvedQuestionCount =
+        questionOrder.filter(
+          questionId => {
+            const events =
+              activeReviewAnswers.filter(
+                event =>
+                  event.questionNumber ===
+                    questionId
+              );
+
+            return deriveQuestionState(events)
+              .resolved;
+          }
+        ).length;
 
       return {
         activeReview,
         answerEvents,
+        advanceEvents,
         activeReviewAnswers,
-        effectiveAnswers,
+        activeReviewAdvances,
         questionOrder,
         currentPosition,
         currentQuestionId,
-        effectiveAttempts: effectiveAnswers.size
+        currentQuestionState,
+        effectiveAttempts:
+          resolvedQuestionCount
       };
     }
 
@@ -272,6 +348,42 @@
 
       document.getElementById("attempts")
         .textContent = state.effectiveAttempts;
+
+      document.getElementById("questionAttempts")
+        .textContent =
+          state.currentQuestionState.attemptCount;
+
+      let stateLabel = "Unanswered";
+
+      if (
+        state.currentQuestionState.resolved
+      ) {
+        stateLabel =
+          state.currentQuestionState.isCorrect
+            ? "Resolved - Correct"
+            : "Resolved - Third Wrong";
+      } else if (
+        state.currentQuestionState.attemptCount > 0
+      ) {
+        stateLabel =
+          "In Progress";
+      }
+
+      document.getElementById("questionState")
+        .textContent = stateLabel;
+
+      const resolved =
+        state.currentQuestionState.resolved;
+
+      document.getElementById("correctButton")
+        .disabled = resolved;
+
+      document.getElementById("wrongButton")
+        .disabled = resolved;
+
+      document.getElementById("nextButton")
+        .style.display =
+          resolved ? "inline-block" : "none";
 
       document.getElementById("deviceId")
         .textContent = deviceId;
@@ -299,13 +411,41 @@
         timestamp: Date.now()
       };
 
-      await db.reviewAnswerEvents.add(event);
+      await db.sequentialAttemptEvents.add(event);
 
       document.getElementById("message")
         .textContent =
           correct
             ? "Correct answer event recorded."
             : "Wrong answer event recorded.";
+
+      await refreshScreen();
+    }
+
+    async function advanceQuestion() {
+      const state =
+        await getDerivedState();
+
+      if (
+        !state.currentQuestionState.resolved
+      ) {
+        return;
+      }
+
+      const event = {
+        id: crypto.randomUUID(),
+        deviceId: deviceId,
+        reviewId: displayedReviewId,
+        questionNumber:
+          displayedQuestionId,
+        timestamp: Date.now()
+      };
+
+      await db.sequentialAdvanceEvents.add(event);
+
+      document.getElementById("message")
+        .textContent =
+          "Next-question event recorded.";
 
       await refreshScreen();
     }
@@ -320,7 +460,7 @@
       const newReviewId =
         crypto.randomUUID();
 
-      await db.reviewPassEvents.add({
+      await db.sequentialPassEvents.add({
         id: newReviewId,
         reviewId: newReviewId,
         parentReviewId: parentReviewId,
@@ -349,6 +489,12 @@
         () => recordAnswer(false)
       );
 
+    document.getElementById("nextButton")
+      .addEventListener(
+        "click",
+        () => advanceQuestion()
+      );
+
     document.getElementById("startOverButton")
       .addEventListener(
         "click",
@@ -358,9 +504,11 @@
     liveQuery(
       async () => ({
         reviews:
-          await db.reviewPassEvents.toArray(),
+          await db.sequentialPassEvents.toArray(),
         answers:
-          await db.reviewAnswerEvents.toArray()
+          await db.sequentialAttemptEvents.toArray(),
+        advances:
+          await db.sequentialAdvanceEvents.toArray()
       })
     ).subscribe({
       next: () => {
