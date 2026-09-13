@@ -79,6 +79,8 @@
 
     const deviceId = getDeviceId();
 
+    let displayedQuestion = 1;
+
     const db = new Dexie("JetSchoolhouseQuestionEventSyncTest", {
       addons: [dexieCloud]
     });
@@ -146,8 +148,10 @@
     async function refreshScreen() {
       const state = await getDerivedState();
 
+      displayedQuestion = state.currentQuestion;
+
       document.getElementById("question").textContent =
-        state.currentQuestion;
+        displayedQuestion;
 
       document.getElementById("attempts").textContent =
         state.effectiveAttempts;
@@ -160,12 +164,12 @@
     }
 
     async function recordAnswer(correct) {
-      const state = await getDerivedState();
+      const questionBeingAnswered = displayedQuestion;
 
       const event = {
         id: crypto.randomUUID(),
         deviceId: deviceId,
-        questionNumber: state.currentQuestion,
+        questionNumber: questionBeingAnswered,
         correct: correct,
         timestamp: Date.now()
       };
