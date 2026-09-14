@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jet Schoolhouse - Full Quiz Sync Test</title>
+  <title>Jet Schoolhouse - Reset Sync Test</title>
 
   <style>
     body {
       font-family: Arial, sans-serif;
-      max-width: 760px;
+      max-width: 700px;
       margin: 50px auto;
       padding: 20px;
     }
@@ -34,96 +34,36 @@
       margin-top: 25px;
       font-size: 14px;
     }
-
-    .answer-record {
-      margin-top: 18px;
-      padding-top: 12px;
-      border-top: 1px solid #ccc;
-    }
   </style>
 </head>
 
 <body>
-
   <h1>Jet Schoolhouse</h1>
-  <h2>Dexie Cloud Full Quiz Test - Prototype 5</h2>
+  <h2>Dexie Cloud Real Sequential Pass Test - Prototype 4</h2>
 
   <p><strong>Pilot:</strong> Joe</p>
 
   <div class="status">
-    <p><strong>Full Quiz</strong></p>
-
-    <p>
-      Current Position:
-      <span id="position">1</span> of 10
-    </p>
-
-    <p>
-      Question ID:
-      <span id="questionId">-</span>
-    </p>
-
-    <p>
-      Answered Questions:
-      <span id="answeredCount">0</span>
-    </p>
-
-    <p>
-      Correct So Far:
-      <span id="correctCount">0</span>
-    </p>
-
-    <p>
-      Quiz State:
-      <span id="quizState">In Progress</span>
-    </p>
-
-    <div class="answer-record">
-      <p>
-        <strong>Current Question Answer of Record:</strong>
-        <span id="answerOfRecord">None</span>
-      </p>
-
-      <p>
-        Raw Answer Events for Current Question:
-        <span id="rawEventCount">0</span>
-      </p>
-    </div>
+    <p><strong>Sequential Review</strong></p>
+    <p>Current Position: <span id="question">1</span> of 10</p>
+    <p>Resolved Questions: <span id="attempts">0</span></p>
+    <p>Question State: <span id="questionState">Unanswered</span></p>
+    <p>Attempts on This Question: <span id="questionAttempts">0</span></p>
   </div>
 
   <p>
     <button id="correctButton">Correct Answer</button>
     <button id="wrongButton">Wrong Answer</button>
-    <button id="startNewQuizButton">Start New Quiz</button>
+    <button id="nextButton" style="display:none;">Next Question</button>
+    <button id="startOverButton">Start Over</button>
   </p>
 
   <p id="message">Connecting to Dexie...</p>
 
   <div class="diagnostic">
-    <p>
-      <strong>Device ID:</strong>
-      <span id="deviceId"></span>
-    </p>
-
-    <p>
-      <strong>Active Quiz ID:</strong>
-      <span id="quizId"></span>
-    </p>
-
-    <p>
-      <strong>Frozen Question Order:</strong>
-      <span id="questionOrder"></span>
-    </p>
-
-    <p>
-      <strong>Question Usage Counts:</strong>
-      <span id="usageCounts"></span>
-    </p>
-
-    <p>
-      <strong>Last Answer Timestamp:</strong>
-      <span id="lastTimestamp">None</span>
-    </p>
+    <p><strong>Device ID:</strong> <span id="deviceId"></span></p>
+    <p><strong>Active Review ID:</strong> <span id="reviewId"></span></p>
+    <p><strong>Question ID:</strong> <span id="questionId"></span></p>
   </div>
 
   <script type="module">
@@ -131,53 +71,13 @@
     import dexieCloud from "dexie-cloud-addon";
 
     const DEVICE_ID_KEY =
-      "jetschoolhouse_fullquiz_test_device_id";
+      "jetschoolhouse_reset_test_device_id";
+
+    const INITIAL_REVIEW_ID =
+      "initial-review";
 
     const TEST_QUESTION_IDS =
       [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-    function getDeviceId() {
-      let deviceId =
-        localStorage.getItem(DEVICE_ID_KEY);
-
-      if (!deviceId) {
-        deviceId = crypto.randomUUID();
-
-        localStorage.setItem(
-          DEVICE_ID_KEY,
-          deviceId
-        );
-      }
-
-      return deviceId;
-    }
-
-    const deviceId = getDeviceId();
-
-    const db =
-      new Dexie(
-        "JetSchoolhouseFullQuizTest",
-        {
-          addons: [dexieCloud]
-        }
-      );
-
-    db.version(1).stores({
-      fullQuizPassEvents: "id",
-      fullQuizAnswerEvents: "id"
-    });
-
-    db.version(2).stores({
-      fullQuizPassEvents: "id",
-      fullQuizAnswerEvents: "id",
-      fullQuizUsageEvents: "id"
-    });
-
-    db.cloud.configure({
-      databaseUrl:
-        "https://zenj0t5lt.dexie.cloud",
-      requireAuth: true
-    });
 
     function buildQuestionOrder() {
       const questions =
@@ -205,80 +105,70 @@
       return questions;
     }
 
-    async function getQuizEvents() {
-      return await
-        db.fullQuizPassEvents.toArray();
+    function getDeviceId() {
+      let deviceId = localStorage.getItem(DEVICE_ID_KEY);
+
+      if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem(DEVICE_ID_KEY, deviceId);
+      }
+
+      return deviceId;
+    }
+
+    const deviceId = getDeviceId();
+
+    let displayedQuestionId = 1;
+    let displayedReviewId = INITIAL_REVIEW_ID;
+    let displayedReviewGeneration = 0;
+
+    const db = new Dexie("JetSchoolhouseRealSequentialPassTest", {
+      addons: [dexieCloud]
+    });
+
+    db.version(1).stores({
+      sequentialPassEvents: "id",
+      sequentialAttemptEvents: "id",
+      sequentialAdvanceEvents: "id"
+    });
+
+    db.cloud.configure({
+      databaseUrl: "https://zenj0t5lt.dexie.cloud",
+      requireAuth: true
+    });
+
+    async function getReviewEvents() {
+      return await db.sequentialPassEvents.toArray();
     }
 
     async function getAnswerEvents() {
-      return await
-        db.fullQuizAnswerEvents.toArray();
+      return await db.sequentialAttemptEvents.toArray();
     }
 
-    async function getUsageEvents() {
-      return await
-        db.fullQuizUsageEvents.toArray();
+    async function getAdvanceEvents() {
+      return await db.sequentialAdvanceEvents.toArray();
     }
 
-    async function recordQuizUsage(
-      quizId,
-      questions
-    ) {
-      const timestamp =
-        Date.now();
+    function chooseActiveReview(reviewEvents) {
+      let active = {
+        id: INITIAL_REVIEW_ID,
+        reviewId: INITIAL_REVIEW_ID,
+        parentReviewId: null,
+        generation: 0,
+        deviceId: "system",
+        createdAt: 0,
+        questions:
+          TEST_QUESTION_IDS.slice()
+      };
 
-      const events =
-        questions.map(questionNumber => ({
-          id: crypto.randomUUID(),
-          deviceId: deviceId,
-          quizId: quizId,
-          questionNumber: questionNumber,
-          timestamp: timestamp
-        }));
-
-      await db.fullQuizUsageEvents.bulkAdd(
-        events
-      );
-    }
-
-    function sortEvents(events) {
-      return events
-        .slice()
-        .sort((a, b) => {
-          if (a.timestamp !== b.timestamp) {
-            return a.timestamp - b.timestamp;
-          }
-
-          return a.id.localeCompare(b.id);
-        });
-    }
-
-    function chooseActiveQuiz(quizEvents) {
-      let active = null;
-
-      for (const event of quizEvents) {
-        const generation =
-          Number.isFinite(event.generation)
-            ? event.generation
-            : 0;
-
-        if (!active) {
-          active = event;
-          continue;
-        }
-
-        const activeGeneration =
-          Number.isFinite(active.generation)
-            ? active.generation
-            : 0;
-
-        if (generation > activeGeneration) {
+      for (const event of reviewEvents) {
+        if (event.generation > active.generation) {
           active = event;
           continue;
         }
 
         if (
-          generation === activeGeneration &&
+          event.generation === active.generation &&
           event.id > active.id
         ) {
           active = event;
@@ -288,346 +178,301 @@
       return active;
     }
 
-    function getEffectiveAnswer(
-      answerEvents,
-      quizId,
-      questionId
+    function sortEvents(events) {
+      return events.slice().sort((a, b) => {
+        if (a.timestamp !== b.timestamp) {
+          return a.timestamp - b.timestamp;
+        }
+
+        return a.id.localeCompare(b.id);
+      });
+    }
+
+    function deriveQuestionState(events) {
+      const ordered =
+        sortEvents(events);
+
+      let attemptCount = 0;
+      let wrongCount = 0;
+      let resolved = false;
+      let isCorrect = null;
+
+      for (const event of ordered) {
+        if (resolved) {
+          continue;
+        }
+
+        attemptCount++;
+
+        if (event.correct) {
+          resolved = true;
+          isCorrect = true;
+        } else {
+          wrongCount++;
+
+          if (wrongCount >= 3) {
+            resolved = true;
+            isCorrect = false;
+          }
+        }
+      }
+
+      return {
+        attemptCount,
+        wrongCount,
+        resolved,
+        isCorrect
+      };
+    }
+
+    function hasAdvanceEvent(
+      advanceEvents,
+      reviewId,
+      questionNumber
     ) {
-      const matching =
-        answerEvents.filter(
-          event =>
-            event.quizId === quizId &&
-            event.questionNumber === questionId
-        );
-
-      if (!matching.length) {
-        return null;
-      }
-
-      return sortEvents(matching)[0];
-    }
-
-    async function ensureQuizExists() {
-      const quizEvents =
-        await getQuizEvents();
-
-      if (quizEvents.length) {
-        return;
-      }
-
-      const quizId =
-        crypto.randomUUID();
-
-      const questions =
-        buildQuestionOrder();
-
-      await db.fullQuizPassEvents.add({
-        id: quizId,
-        quizId: quizId,
-        parentQuizId: null,
-        generation: 0,
-        deviceId: deviceId,
-        createdAt: Date.now(),
-        questions: questions
-      });
-
-      await recordQuizUsage(
-        quizId,
-        questions
+      return advanceEvents.some(
+        event =>
+          event.reviewId === reviewId &&
+          event.questionNumber === questionNumber
       );
-    }
-
-    async function startNewQuiz() {
-      const quizEvents =
-        await getQuizEvents();
-
-      const activeQuiz =
-        chooseActiveQuiz(quizEvents);
-
-      if (!activeQuiz) {
-        return;
-      }
-
-      const parentGeneration =
-        Number.isFinite(activeQuiz.generation)
-          ? activeQuiz.generation
-          : 0;
-
-      const newQuizId =
-        crypto.randomUUID();
-
-      const questions =
-        buildQuestionOrder();
-
-      await db.fullQuizPassEvents.add({
-        id: newQuizId,
-        quizId: newQuizId,
-        parentQuizId: activeQuiz.quizId,
-        generation: parentGeneration + 1,
-        deviceId: deviceId,
-        createdAt: Date.now(),
-        questions: questions
-      });
-
-      await recordQuizUsage(
-        newQuizId,
-        questions
-      );
-
-      document.getElementById("message")
-        .textContent =
-          "New Full Quiz started.";
-
-      await refreshScreen();
     }
 
     async function getDerivedState() {
-      const quizEvents =
-        await getQuizEvents();
+      const reviewEvents =
+        await getReviewEvents();
 
       const answerEvents =
         await getAnswerEvents();
 
-      const usageEvents =
-        await getUsageEvents();
+      const advanceEvents =
+        await getAdvanceEvents();
 
-      const activeQuiz =
-        chooseActiveQuiz(quizEvents);
+      const activeReview =
+        chooseActiveReview(reviewEvents);
 
-      if (!activeQuiz) {
-        return null;
-      }
-
-      const questionOrder =
-        Array.isArray(activeQuiz.questions)
-          ? activeQuiz.questions
-          : TEST_QUESTION_IDS;
-
-      const effectiveAnswers =
-        questionOrder
-          .map(questionId =>
-            getEffectiveAnswer(
-              answerEvents,
-              activeQuiz.quizId,
-              questionId
-            )
-          )
-          .filter(Boolean);
-
-      let currentPosition =
-        questionOrder.findIndex(
-          questionId =>
-            !getEffectiveAnswer(
-              answerEvents,
-              activeQuiz.quizId,
-              questionId
-            )
+      const activeReviewAnswers =
+        answerEvents.filter(
+          event =>
+            event.reviewId === activeReview.reviewId
         );
 
-      const complete =
-        currentPosition === -1;
+      const activeReviewAdvances =
+        advanceEvents.filter(
+          event =>
+            event.reviewId === activeReview.reviewId
+        );
 
-      if (complete) {
-        currentPosition =
-          questionOrder.length;
+      const questionOrder =
+        Array.isArray(activeReview.questions)
+          ? activeReview.questions
+          : TEST_QUESTION_IDS;
+
+      let currentPosition = 0;
+
+      while (
+        currentPosition <
+          questionOrder.length - 1 &&
+        hasAdvanceEvent(
+          activeReviewAdvances,
+          activeReview.reviewId,
+          questionOrder[currentPosition]
+        )
+      ) {
+        currentPosition++;
       }
 
       const currentQuestionId =
-        complete
-          ? null
-          : questionOrder[currentPosition];
+        questionOrder[currentPosition];
 
-      const currentQuestionRawEvents =
-        complete
-          ? []
-          : answerEvents.filter(
-              event =>
-                event.quizId ===
-                  activeQuiz.quizId &&
-                event.questionNumber ===
-                  currentQuestionId
-            );
-
-      const currentAnswerOfRecord =
-        complete
-          ? null
-          : getEffectiveAnswer(
-              answerEvents,
-              activeQuiz.quizId,
+      const currentQuestionEvents =
+        activeReviewAnswers.filter(
+          event =>
+            event.questionNumber ===
               currentQuestionId
-            );
+        );
 
-      const correctCount =
-        effectiveAnswers.filter(
-          event => event.correct
-        ).length;
+      const currentQuestionState =
+        deriveQuestionState(
+          currentQuestionEvents
+        );
 
-      const usageCounts =
-        TEST_QUESTION_IDS.reduce(
-          (counts, questionId) => {
-            counts[questionId] =
-              usageEvents.filter(
+      const resolvedQuestionCount =
+        questionOrder.filter(
+          questionId => {
+            const events =
+              activeReviewAnswers.filter(
                 event =>
                   event.questionNumber ===
                     questionId
-              ).length;
+              );
 
-            return counts;
-          },
-          {}
-        );
+            return deriveQuestionState(events)
+              .resolved;
+          }
+        ).length;
 
       return {
-        activeQuiz,
+        activeReview,
         answerEvents,
-        usageEvents,
-        usageCounts,
+        advanceEvents,
+        activeReviewAnswers,
+        activeReviewAdvances,
         questionOrder,
-        effectiveAnswers,
         currentPosition,
         currentQuestionId,
-        currentQuestionRawEvents,
-        currentAnswerOfRecord,
-        correctCount,
-        complete
+        currentQuestionState,
+        effectiveAttempts:
+          resolvedQuestionCount
       };
     }
 
     async function refreshScreen() {
-      const state =
-        await getDerivedState();
+      const state = await getDerivedState();
 
-      if (!state) {
-        return;
-      }
+      displayedQuestionId =
+        state.currentQuestionId;
 
-      document.getElementById("deviceId")
-        .textContent =
-          deviceId;
+      displayedReviewId =
+        state.activeReview.reviewId;
 
-      document.getElementById("quizId")
-        .textContent =
-          state.activeQuiz.quizId;
+      displayedReviewGeneration =
+        state.activeReview.generation;
 
-      document.getElementById("questionOrder")
-        .textContent =
-          state.questionOrder.join(", ");
-
-      document.getElementById("usageCounts")
-        .textContent =
-          TEST_QUESTION_IDS
-            .map(
-              questionId =>
-                "Q" +
-                questionId +
-                ": " +
-                state.usageCounts[questionId]
-            )
-            .join(", ");
-
-      document.getElementById("answeredCount")
-        .textContent =
-          state.effectiveAnswers.length;
-
-      document.getElementById("correctCount")
-        .textContent =
-          state.correctCount;
-
-      document.getElementById("quizState")
-        .textContent =
-          state.complete
-            ? "Complete"
-            : "In Progress";
-
-      if (state.complete) {
-        document.getElementById("position")
-          .textContent = "10";
-
-        document.getElementById("questionId")
-          .textContent = "-";
-
-        document.getElementById("answerOfRecord")
-          .textContent = "Quiz Complete";
-
-        document.getElementById("rawEventCount")
-          .textContent = "0";
-
-        document.getElementById("correctButton")
-          .disabled = true;
-
-        document.getElementById("wrongButton")
-          .disabled = true;
-
-        return;
-      }
-
-      document.getElementById("position")
+      document.getElementById("question")
         .textContent =
           state.currentPosition + 1;
 
       document.getElementById("questionId")
         .textContent =
-          state.currentQuestionId;
+          displayedQuestionId;
 
-      document.getElementById("rawEventCount")
-        .textContent =
-          state.currentQuestionRawEvents.length;
+      document.getElementById("attempts")
+        .textContent = state.effectiveAttempts;
 
-      document.getElementById("answerOfRecord")
+      document.getElementById("questionAttempts")
         .textContent =
-          state.currentAnswerOfRecord
-            ? (
-                state.currentAnswerOfRecord.correct
-                  ? "Correct"
-                  : "Wrong"
-              )
-            : "None";
+          state.currentQuestionState.attemptCount;
+
+      let stateLabel = "Unanswered";
+
+      if (
+        state.currentQuestionState.resolved
+      ) {
+        stateLabel =
+          state.currentQuestionState.isCorrect
+            ? "Resolved - Correct"
+            : "Resolved - Third Wrong";
+      } else if (
+        state.currentQuestionState.attemptCount > 0
+      ) {
+        stateLabel =
+          "In Progress";
+      }
+
+      document.getElementById("questionState")
+        .textContent = stateLabel;
+
+      const resolved =
+        state.currentQuestionState.resolved;
 
       document.getElementById("correctButton")
-        .disabled = false;
+        .disabled = resolved;
 
       document.getElementById("wrongButton")
-        .disabled = false;
+        .disabled = resolved;
+
+      document.getElementById("nextButton")
+        .style.display =
+          resolved ? "inline-block" : "none";
+
+      document.getElementById("deviceId")
+        .textContent = deviceId;
+
+      document.getElementById("reviewId")
+        .textContent = displayedReviewId;
 
       document.getElementById("message")
-        .textContent =
-          "Dexie database ready.";
+        .textContent = "Dexie database ready.";
     }
 
     async function recordAnswer(correct) {
-      const state =
-        await getDerivedState();
+      const questionBeingAnswered =
+        displayedQuestionId;
 
-      if (!state || state.complete) {
-        return;
-      }
-
-      const timestamp =
-        Date.now();
+      const reviewBeingAnswered =
+        displayedReviewId;
 
       const event = {
         id: crypto.randomUUID(),
         deviceId: deviceId,
-        quizId: state.activeQuiz.quizId,
-        questionNumber:
-          state.currentQuestionId,
+        reviewId: reviewBeingAnswered,
+        questionNumber: questionBeingAnswered,
         correct: correct,
-        timestamp: timestamp
+        timestamp: Date.now()
       };
 
-      await db.fullQuizAnswerEvents.add(
-        event
-      );
-
-      document.getElementById("lastTimestamp")
-        .textContent =
-          timestamp.toString();
+      await db.sequentialAttemptEvents.add(event);
 
       document.getElementById("message")
         .textContent =
           correct
-            ? "Correct Full Quiz answer event recorded."
-            : "Wrong Full Quiz answer event recorded.";
+            ? "Correct answer event recorded."
+            : "Wrong answer event recorded.";
+
+      await refreshScreen();
+    }
+
+    async function advanceQuestion() {
+      const state =
+        await getDerivedState();
+
+      if (
+        !state.currentQuestionState.resolved
+      ) {
+        return;
+      }
+
+      const event = {
+        id: crypto.randomUUID(),
+        deviceId: deviceId,
+        reviewId: displayedReviewId,
+        questionNumber:
+          displayedQuestionId,
+        timestamp: Date.now()
+      };
+
+      await db.sequentialAdvanceEvents.add(event);
+
+      document.getElementById("message")
+        .textContent =
+          "Next-question event recorded.";
+
+      await refreshScreen();
+    }
+
+    async function startOver() {
+      const parentReviewId =
+        displayedReviewId;
+
+      const parentGeneration =
+        displayedReviewGeneration;
+
+      const newReviewId =
+        crypto.randomUUID();
+
+      await db.sequentialPassEvents.add({
+        id: newReviewId,
+        reviewId: newReviewId,
+        parentReviewId: parentReviewId,
+        generation: parentGeneration + 1,
+        deviceId: deviceId,
+        createdAt: Date.now(),
+        questions: buildQuestionOrder()
+      });
+
+      document.getElementById("message")
+        .textContent =
+          "New Sequential Review started.";
 
       await refreshScreen();
     }
@@ -644,33 +489,34 @@
         () => recordAnswer(false)
       );
 
-    document.getElementById("startNewQuizButton")
+    document.getElementById("nextButton")
       .addEventListener(
         "click",
-        () => startNewQuiz()
+        () => advanceQuestion()
       );
 
-    await ensureQuizExists();
+    document.getElementById("startOverButton")
+      .addEventListener(
+        "click",
+        () => startOver()
+      );
 
     liveQuery(
       async () => ({
-        quizzes:
-          await db.fullQuizPassEvents.toArray(),
-
+        reviews:
+          await db.sequentialPassEvents.toArray(),
         answers:
-          await db.fullQuizAnswerEvents.toArray(),
-
-        usage:
-          await db.fullQuizUsageEvents.toArray()
+          await db.sequentialAttemptEvents.toArray(),
+        advances:
+          await db.sequentialAdvanceEvents.toArray()
       })
     ).subscribe({
       next: () => {
         refreshScreen();
       },
-
-      error: error => {
+      error: (error) => {
         console.error(
-          "Live Full Quiz subscription error:",
+          "Live review subscription error:",
           error
         );
       }
@@ -678,6 +524,5 @@
 
     await refreshScreen();
   </script>
-
 </body>
 </html>
