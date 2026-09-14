@@ -162,6 +162,12 @@
       fullQuizAnswerEvents: "id"
     });
 
+    db.version(2).stores({
+      fullQuizPassEvents: "id",
+      fullQuizAnswerEvents: "id",
+      fullQuizUsageEvents: "id"
+    });
+
     db.cloud.configure({
       databaseUrl:
         "https://zenj0t5lt.dexie.cloud",
@@ -202,6 +208,32 @@
     async function getAnswerEvents() {
       return await
         db.fullQuizAnswerEvents.toArray();
+    }
+
+    async function getUsageEvents() {
+      return await
+        db.fullQuizUsageEvents.toArray();
+    }
+
+    async function recordQuizUsage(
+      quizId,
+      questions
+    ) {
+      const timestamp =
+        Date.now();
+
+      const events =
+        questions.map(questionNumber => ({
+          id: crypto.randomUUID(),
+          deviceId: deviceId,
+          quizId: quizId,
+          questionNumber: questionNumber,
+          timestamp: timestamp
+        }));
+
+      await db.fullQuizUsageEvents.bulkAdd(
+        events
+      );
     }
 
     function sortEvents(events) {
@@ -281,6 +313,9 @@
       const quizId =
         crypto.randomUUID();
 
+      const questions =
+        buildQuestionOrder();
+
       await db.fullQuizPassEvents.add({
         id: quizId,
         quizId: quizId,
@@ -288,8 +323,13 @@
         generation: 0,
         deviceId: deviceId,
         createdAt: Date.now(),
-        questions: buildQuestionOrder()
+        questions: questions
       });
+
+      await recordQuizUsage(
+        quizId,
+        questions
+      );
     }
 
     async function startNewQuiz() {
@@ -311,6 +351,9 @@
       const newQuizId =
         crypto.randomUUID();
 
+      const questions =
+        buildQuestionOrder();
+
       await db.fullQuizPassEvents.add({
         id: newQuizId,
         quizId: newQuizId,
@@ -318,8 +361,13 @@
         generation: parentGeneration + 1,
         deviceId: deviceId,
         createdAt: Date.now(),
-        questions: buildQuestionOrder()
+        questions: questions
       });
+
+      await recordQuizUsage(
+        newQuizId,
+        questions
+      );
 
       document.getElementById("message")
         .textContent =
@@ -573,7 +621,10 @@
           await db.fullQuizPassEvents.toArray(),
 
         answers:
-          await db.fullQuizAnswerEvents.toArray()
+          await db.fullQuizAnswerEvents.toArray(),
+
+        usage:
+          await db.fullQuizUsageEvents.toArray()
       })
     ).subscribe({
       next: () => {
