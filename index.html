@@ -94,6 +94,7 @@
   <p>
     <button id="correctButton">Correct Answer</button>
     <button id="wrongButton">Wrong Answer</button>
+    <button id="startNewQuizButton">Start New Quiz</button>
   </p>
 
   <p id="message">Connecting to Dexie...</p>
@@ -216,19 +217,38 @@
     }
 
     function chooseActiveQuiz(quizEvents) {
-      if (!quizEvents.length) {
-        return null;
+      let active = null;
+
+      for (const event of quizEvents) {
+        const generation =
+          Number.isFinite(event.generation)
+            ? event.generation
+            : 0;
+
+        if (!active) {
+          active = event;
+          continue;
+        }
+
+        const activeGeneration =
+          Number.isFinite(active.generation)
+            ? active.generation
+            : 0;
+
+        if (generation > activeGeneration) {
+          active = event;
+          continue;
+        }
+
+        if (
+          generation === activeGeneration &&
+          event.id > active.id
+        ) {
+          active = event;
+        }
       }
 
-      return quizEvents
-        .slice()
-        .sort((a, b) => {
-          if (a.createdAt !== b.createdAt) {
-            return a.createdAt - b.createdAt;
-          }
-
-          return a.id.localeCompare(b.id);
-        })[0];
+      return active;
     }
 
     function getEffectiveAnswer(
@@ -264,10 +284,48 @@
       await db.fullQuizPassEvents.add({
         id: quizId,
         quizId: quizId,
+        parentQuizId: null,
+        generation: 0,
         deviceId: deviceId,
         createdAt: Date.now(),
         questions: buildQuestionOrder()
       });
+    }
+
+    async function startNewQuiz() {
+      const quizEvents =
+        await getQuizEvents();
+
+      const activeQuiz =
+        chooseActiveQuiz(quizEvents);
+
+      if (!activeQuiz) {
+        return;
+      }
+
+      const parentGeneration =
+        Number.isFinite(activeQuiz.generation)
+          ? activeQuiz.generation
+          : 0;
+
+      const newQuizId =
+        crypto.randomUUID();
+
+      await db.fullQuizPassEvents.add({
+        id: newQuizId,
+        quizId: newQuizId,
+        parentQuizId: activeQuiz.quizId,
+        generation: parentGeneration + 1,
+        deviceId: deviceId,
+        createdAt: Date.now(),
+        questions: buildQuestionOrder()
+      });
+
+      document.getElementById("message")
+        .textContent =
+          "New Full Quiz started.";
+
+      await refreshScreen();
     }
 
     async function getDerivedState() {
@@ -499,6 +557,12 @@
       .addEventListener(
         "click",
         () => recordAnswer(false)
+      );
+
+    document.getElementById("startNewQuizButton")
+      .addEventListener(
+        "click",
+        () => startNewQuiz()
       );
 
     await ensureQuizExists();
