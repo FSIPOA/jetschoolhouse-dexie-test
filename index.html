@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jet Schoolhouse - Reset Sync Test</title>
+  <title>Jet Schoolhouse - System Tiles Sync Test</title>
 
   <style>
     body {
@@ -15,6 +15,10 @@
 
     h1 {
       margin-bottom: 5px;
+    }
+
+    .system-selector {
+      margin: 20px 0;
     }
 
     .status {
@@ -30,6 +34,11 @@
       font-size: 16px;
     }
 
+    .active-system {
+      font-weight: bold;
+      outline: 2px solid #333;
+    }
+
     .diagnostic {
       margin-top: 25px;
       font-size: 14px;
@@ -39,13 +48,20 @@
 
 <body>
   <h1>Jet Schoolhouse</h1>
-  <h2>Dexie Cloud Real Sequential Pass Test - Prototype 4</h2>
+  <h2>Dexie Cloud System Tiles Test - Prototype 6</h2>
 
   <p><strong>Pilot:</strong> Joe</p>
 
+  <div class="system-selector">
+    <p><strong>System Tile:</strong></p>
+    <button id="electricalButton">Electrical</button>
+    <button id="hydraulicButton">Hydraulic</button>
+  </div>
+
   <div class="status">
-    <p><strong>Sequential Review</strong></p>
-    <p>Current Position: <span id="question">1</span> of 10</p>
+    <p><strong>Study by System</strong></p>
+    <p>Active System: <span id="systemName"></span></p>
+    <p>Current Position: <span id="question">1</span> of 5</p>
     <p>Resolved Questions: <span id="attempts">0</span></p>
     <p>Question State: <span id="questionState">Unanswered</span></p>
     <p>Attempts on This Question: <span id="questionAttempts">0</span></p>
@@ -55,14 +71,16 @@
     <button id="correctButton">Correct Answer</button>
     <button id="wrongButton">Wrong Answer</button>
     <button id="nextButton" style="display:none;">Next Question</button>
-    <button id="startOverButton">Start Over</button>
+    <button id="startOverButton">Start Over This System</button>
   </p>
 
   <p id="message">Connecting to Dexie...</p>
 
   <div class="diagnostic">
     <p><strong>Device ID:</strong> <span id="deviceId"></span></p>
+    <p><strong>System ID:</strong> <span id="systemId"></span></p>
     <p><strong>Active Review ID:</strong> <span id="reviewId"></span></p>
+    <p><strong>Review Generation:</strong> <span id="reviewGeneration"></span></p>
     <p><strong>Question ID:</strong> <span id="questionId"></span></p>
   </div>
 
@@ -71,17 +89,43 @@
     import dexieCloud from "dexie-cloud-addon";
 
     const DEVICE_ID_KEY =
-      "jetschoolhouse_reset_test_device_id";
-
-    const INITIAL_REVIEW_ID =
-      "initial-review";
+      "jetschoolhouse_system_tiles_test_device_id";
 
     const TEST_QUESTION_IDS =
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      [1, 2, 3, 4, 5];
 
-    function buildQuestionOrder() {
+    const SYSTEMS = {
+      electrical: {
+        id: "electrical",
+        name: "Electrical",
+        questions: TEST_QUESTION_IDS.slice()
+      },
+      hydraulic: {
+        id: "hydraulic",
+        name: "Hydraulic",
+        questions: TEST_QUESTION_IDS.slice()
+      }
+    };
+
+    function getSystem(systemId) {
+      const system = SYSTEMS[systemId];
+
+      if (!system) {
+        throw new Error(
+          `Unknown systemId: ${systemId}`
+        );
+      }
+
+      return system;
+    }
+
+    function getInitialReviewId(systemId) {
+      return `initial-review-${systemId}`;
+    }
+
+    function buildQuestionOrder(systemId) {
       const questions =
-        TEST_QUESTION_IDS.slice();
+        getSystem(systemId).questions.slice();
 
       for (
         let i = questions.length - 1;
@@ -106,11 +150,17 @@
     }
 
     function getDeviceId() {
-      let deviceId = localStorage.getItem(DEVICE_ID_KEY);
+      let deviceId =
+        localStorage.getItem(
+          DEVICE_ID_KEY
+        );
 
       if (!deviceId) {
         deviceId = crypto.randomUUID();
-        localStorage.setItem(DEVICE_ID_KEY, deviceId);
+        localStorage.setItem(
+          DEVICE_ID_KEY,
+          deviceId
+        );
       }
 
       return deviceId;
@@ -118,57 +168,94 @@
 
     const deviceId = getDeviceId();
 
-    let displayedQuestionId = 1;
-    let displayedReviewId = INITIAL_REVIEW_ID;
+    let displayedSystemId =
+      SYSTEMS.electrical.id;
+
+    let displayedQuestionId =
+      TEST_QUESTION_IDS[0];
+
+    let displayedReviewId =
+      getInitialReviewId(
+        displayedSystemId
+      );
+
     let displayedReviewGeneration = 0;
 
-    const db = new Dexie("JetSchoolhouseRealSequentialPassTest", {
-      addons: [dexieCloud]
-    });
+    const db = new Dexie(
+      "JetSchoolhouseSystemTilesTest",
+      {
+        addons: [dexieCloud]
+      }
+    );
 
     db.version(1).stores({
-      sequentialPassEvents: "id",
-      sequentialAttemptEvents: "id",
-      sequentialAdvanceEvents: "id"
+      systemPassEvents: "id",
+      systemAttemptEvents: "id",
+      systemAdvanceEvents: "id"
     });
 
     db.cloud.configure({
-      databaseUrl: "https://zenj0t5lt.dexie.cloud",
+      databaseUrl:
+        "https://zenj0t5lt.dexie.cloud",
       requireAuth: true
     });
 
-    async function getReviewEvents() {
-      return await db.sequentialPassEvents.toArray();
+    async function getPassEvents() {
+      return await db.systemPassEvents.toArray();
     }
 
     async function getAnswerEvents() {
-      return await db.sequentialAttemptEvents.toArray();
+      return await db.systemAttemptEvents.toArray();
     }
 
     async function getAdvanceEvents() {
-      return await db.sequentialAdvanceEvents.toArray();
+      return await db.systemAdvanceEvents.toArray();
     }
 
-    function chooseActiveReview(reviewEvents) {
-      let active = {
-        id: INITIAL_REVIEW_ID,
-        reviewId: INITIAL_REVIEW_ID,
+    function getInitialReview(systemId) {
+      const system = getSystem(systemId);
+      const reviewId =
+        getInitialReviewId(systemId);
+
+      return {
+        id: reviewId,
+        reviewId: reviewId,
+        systemId: systemId,
         parentReviewId: null,
         generation: 0,
         deviceId: "system",
         createdAt: 0,
-        questions:
-          TEST_QUESTION_IDS.slice()
+        questions: system.questions.slice()
       };
+    }
 
-      for (const event of reviewEvents) {
-        if (event.generation > active.generation) {
+    function chooseActiveReview(
+      systemId,
+      reviewEvents
+    ) {
+      let active =
+        getInitialReview(systemId);
+
+      const scopedReviewEvents =
+        reviewEvents.filter(
+          event =>
+            event.systemId === systemId
+        );
+
+      for (
+        const event of scopedReviewEvents
+      ) {
+        if (
+          event.generation >
+            active.generation
+        ) {
           active = event;
           continue;
         }
 
         if (
-          event.generation === active.generation &&
+          event.generation ===
+            active.generation &&
           event.id > active.id
         ) {
           active = event;
@@ -179,13 +266,19 @@
     }
 
     function sortEvents(events) {
-      return events.slice().sort((a, b) => {
-        if (a.timestamp !== b.timestamp) {
-          return a.timestamp - b.timestamp;
-        }
+      return events.slice().sort(
+        (a, b) => {
+          if (
+            a.timestamp !== b.timestamp
+          ) {
+            return (
+              a.timestamp - b.timestamp
+            );
+          }
 
-        return a.id.localeCompare(b.id);
-      });
+          return a.id.localeCompare(b.id);
+        }
+      );
     }
 
     function deriveQuestionState(events) {
@@ -227,45 +320,62 @@
 
     function hasAdvanceEvent(
       advanceEvents,
+      systemId,
       reviewId,
       questionNumber
     ) {
       return advanceEvents.some(
         event =>
+          event.systemId === systemId &&
           event.reviewId === reviewId &&
-          event.questionNumber === questionNumber
+          event.questionNumber ===
+            questionNumber
       );
     }
 
-    async function getDerivedState() {
-      const reviewEvents =
-        await getReviewEvents();
+    async function getDerivedState(
+      systemId
+    ) {
+      const system = getSystem(systemId);
 
-      const answerEvents =
-        await getAnswerEvents();
-
-      const advanceEvents =
-        await getAdvanceEvents();
+      const [
+        reviewEvents,
+        answerEvents,
+        advanceEvents
+      ] = await Promise.all([
+        getPassEvents(),
+        getAnswerEvents(),
+        getAdvanceEvents()
+      ]);
 
       const activeReview =
-        chooseActiveReview(reviewEvents);
+        chooseActiveReview(
+          systemId,
+          reviewEvents
+        );
 
       const activeReviewAnswers =
         answerEvents.filter(
           event =>
-            event.reviewId === activeReview.reviewId
+            event.systemId === systemId &&
+            event.reviewId ===
+              activeReview.reviewId
         );
 
       const activeReviewAdvances =
         advanceEvents.filter(
           event =>
-            event.reviewId === activeReview.reviewId
+            event.systemId === systemId &&
+            event.reviewId ===
+              activeReview.reviewId
         );
 
       const questionOrder =
-        Array.isArray(activeReview.questions)
+        Array.isArray(
+          activeReview.questions
+        )
           ? activeReview.questions
-          : TEST_QUESTION_IDS;
+          : system.questions;
 
       let currentPosition = 0;
 
@@ -274,6 +384,7 @@
           questionOrder.length - 1 &&
         hasAdvanceEvent(
           activeReviewAdvances,
+          systemId,
           activeReview.reviewId,
           questionOrder[currentPosition]
         )
@@ -306,15 +417,15 @@
                     questionId
               );
 
-            return deriveQuestionState(events)
-              .resolved;
+            return deriveQuestionState(
+              events
+            ).resolved;
           }
         ).length;
 
       return {
+        system,
         activeReview,
-        answerEvents,
-        advanceEvents,
         activeReviewAnswers,
         activeReviewAdvances,
         questionOrder,
@@ -327,7 +438,17 @@
     }
 
     async function refreshScreen() {
-      const state = await getDerivedState();
+      const systemId =
+        displayedSystemId;
+
+      const state =
+        await getDerivedState(systemId);
+
+      if (
+        systemId !== displayedSystemId
+      ) {
+        return;
+      }
 
       displayedQuestionId =
         state.currentQuestionId;
@@ -338,64 +459,133 @@
       displayedReviewGeneration =
         state.activeReview.generation;
 
-      document.getElementById("question")
-        .textContent =
-          state.currentPosition + 1;
+      document.getElementById(
+        "systemName"
+      ).textContent = state.system.name;
 
-      document.getElementById("questionId")
-        .textContent =
-          displayedQuestionId;
+      document.getElementById(
+        "systemId"
+      ).textContent = state.system.id;
 
-      document.getElementById("attempts")
-        .textContent = state.effectiveAttempts;
+      document.getElementById(
+        "question"
+      ).textContent =
+        state.currentPosition + 1;
 
-      document.getElementById("questionAttempts")
-        .textContent =
-          state.currentQuestionState.attemptCount;
+      document.getElementById(
+        "questionId"
+      ).textContent =
+        displayedQuestionId;
+
+      document.getElementById(
+        "attempts"
+      ).textContent =
+        state.effectiveAttempts;
+
+      document.getElementById(
+        "questionAttempts"
+      ).textContent =
+        state.currentQuestionState
+          .attemptCount;
 
       let stateLabel = "Unanswered";
 
       if (
-        state.currentQuestionState.resolved
+        state.currentQuestionState
+          .resolved
       ) {
         stateLabel =
-          state.currentQuestionState.isCorrect
+          state.currentQuestionState
+            .isCorrect
             ? "Resolved - Correct"
             : "Resolved - Third Wrong";
       } else if (
-        state.currentQuestionState.attemptCount > 0
+        state.currentQuestionState
+          .attemptCount > 0
       ) {
-        stateLabel =
-          "In Progress";
+        stateLabel = "In Progress";
       }
 
-      document.getElementById("questionState")
-        .textContent = stateLabel;
+      document.getElementById(
+        "questionState"
+      ).textContent = stateLabel;
 
       const resolved =
-        state.currentQuestionState.resolved;
+        state.currentQuestionState
+          .resolved;
 
-      document.getElementById("correctButton")
-        .disabled = resolved;
+      document.getElementById(
+        "correctButton"
+      ).disabled = resolved;
 
-      document.getElementById("wrongButton")
-        .disabled = resolved;
+      document.getElementById(
+        "wrongButton"
+      ).disabled = resolved;
 
-      document.getElementById("nextButton")
-        .style.display =
-          resolved ? "inline-block" : "none";
+      document.getElementById(
+        "nextButton"
+      ).style.display =
+        resolved
+          ? "inline-block"
+          : "none";
 
-      document.getElementById("deviceId")
-        .textContent = deviceId;
+      document.getElementById(
+        "deviceId"
+      ).textContent = deviceId;
 
-      document.getElementById("reviewId")
-        .textContent = displayedReviewId;
+      document.getElementById(
+        "reviewId"
+      ).textContent =
+        displayedReviewId;
 
-      document.getElementById("message")
-        .textContent = "Dexie database ready.";
+      document.getElementById(
+        "reviewGeneration"
+      ).textContent =
+        displayedReviewGeneration;
+
+      document.getElementById(
+        "electricalButton"
+      ).classList.toggle(
+        "active-system",
+        displayedSystemId ===
+          SYSTEMS.electrical.id
+      );
+
+      document.getElementById(
+        "hydraulicButton"
+      ).classList.toggle(
+        "active-system",
+        displayedSystemId ===
+          SYSTEMS.hydraulic.id
+      );
+
+      document.getElementById(
+        "message"
+      ).textContent =
+        "Dexie database ready.";
+    }
+
+    async function selectSystem(
+      systemId
+    ) {
+      getSystem(systemId);
+
+      displayedSystemId = systemId;
+
+      document.getElementById(
+        "message"
+      ).textContent =
+        `Opening ${
+          getSystem(systemId).name
+        }...`;
+
+      await refreshScreen();
     }
 
     async function recordAnswer(correct) {
+      const systemBeingAnswered =
+        displayedSystemId;
+
       const questionBeingAnswered =
         displayedQuestionId;
 
@@ -405,110 +595,187 @@
       const event = {
         id: crypto.randomUUID(),
         deviceId: deviceId,
-        reviewId: reviewBeingAnswered,
-        questionNumber: questionBeingAnswered,
+        systemId:
+          systemBeingAnswered,
+        reviewId:
+          reviewBeingAnswered,
+        questionNumber:
+          questionBeingAnswered,
         correct: correct,
         timestamp: Date.now()
       };
 
-      await db.sequentialAttemptEvents.add(event);
+      await db.systemAttemptEvents.add(
+        event
+      );
 
-      document.getElementById("message")
-        .textContent =
-          correct
-            ? "Correct answer event recorded."
-            : "Wrong answer event recorded.";
+      document.getElementById(
+        "message"
+      ).textContent =
+        correct
+          ? "Correct answer event recorded."
+          : "Wrong answer event recorded.";
 
       await refreshScreen();
     }
 
     async function advanceQuestion() {
+      const systemBeingAdvanced =
+        displayedSystemId;
+
+      const reviewBeingAdvanced =
+        displayedReviewId;
+
+      const questionBeingAdvanced =
+        displayedQuestionId;
+
       const state =
-        await getDerivedState();
+        await getDerivedState(
+          systemBeingAdvanced
+        );
 
       if (
-        !state.currentQuestionState.resolved
+        state.activeReview.reviewId !==
+          reviewBeingAdvanced ||
+        state.currentQuestionId !==
+          questionBeingAdvanced ||
+        !state.currentQuestionState
+          .resolved
       ) {
+        await refreshScreen();
         return;
       }
 
       const event = {
         id: crypto.randomUUID(),
         deviceId: deviceId,
-        reviewId: displayedReviewId,
+        systemId:
+          systemBeingAdvanced,
+        reviewId:
+          reviewBeingAdvanced,
         questionNumber:
-          displayedQuestionId,
+          questionBeingAdvanced,
         timestamp: Date.now()
       };
 
-      await db.sequentialAdvanceEvents.add(event);
+      await db.systemAdvanceEvents.add(
+        event
+      );
 
-      document.getElementById("message")
-        .textContent =
-          "Next-question event recorded.";
+      document.getElementById(
+        "message"
+      ).textContent =
+        "Next-question event recorded.";
 
       await refreshScreen();
     }
 
     async function startOver() {
+      const systemBeingReset =
+        displayedSystemId;
+
+      const state =
+        await getDerivedState(
+          systemBeingReset
+        );
+
       const parentReviewId =
-        displayedReviewId;
+        state.activeReview.reviewId;
 
       const parentGeneration =
-        displayedReviewGeneration;
+        state.activeReview.generation;
 
       const newReviewId =
         crypto.randomUUID();
 
-      await db.sequentialPassEvents.add({
+      await db.systemPassEvents.add({
         id: newReviewId,
         reviewId: newReviewId,
-        parentReviewId: parentReviewId,
-        generation: parentGeneration + 1,
+        systemId:
+          systemBeingReset,
+        parentReviewId:
+          parentReviewId,
+        generation:
+          parentGeneration + 1,
         deviceId: deviceId,
         createdAt: Date.now(),
-        questions: buildQuestionOrder()
+        questions:
+          buildQuestionOrder(
+            systemBeingReset
+          )
       });
 
-      document.getElementById("message")
-        .textContent =
-          "New Sequential Review started.";
+      document.getElementById(
+        "message"
+      ).textContent =
+        `New ${
+          getSystem(
+            systemBeingReset
+          ).name
+        } review started.`;
 
       await refreshScreen();
     }
 
-    document.getElementById("correctButton")
-      .addEventListener(
-        "click",
-        () => recordAnswer(true)
-      );
+    document.getElementById(
+      "electricalButton"
+    ).addEventListener(
+      "click",
+      () =>
+        selectSystem(
+          SYSTEMS.electrical.id
+        )
+    );
 
-    document.getElementById("wrongButton")
-      .addEventListener(
-        "click",
-        () => recordAnswer(false)
-      );
+    document.getElementById(
+      "hydraulicButton"
+    ).addEventListener(
+      "click",
+      () =>
+        selectSystem(
+          SYSTEMS.hydraulic.id
+        )
+    );
 
-    document.getElementById("nextButton")
-      .addEventListener(
-        "click",
-        () => advanceQuestion()
-      );
+    document.getElementById(
+      "correctButton"
+    ).addEventListener(
+      "click",
+      () => recordAnswer(true)
+    );
 
-    document.getElementById("startOverButton")
-      .addEventListener(
-        "click",
-        () => startOver()
-      );
+    document.getElementById(
+      "wrongButton"
+    ).addEventListener(
+      "click",
+      () => recordAnswer(false)
+    );
+
+    document.getElementById(
+      "nextButton"
+    ).addEventListener(
+      "click",
+      () => advanceQuestion()
+    );
+
+    document.getElementById(
+      "startOverButton"
+    ).addEventListener(
+      "click",
+      () => startOver()
+    );
 
     liveQuery(
       async () => ({
         reviews:
-          await db.sequentialPassEvents.toArray(),
+          await db.systemPassEvents
+            .toArray(),
         answers:
-          await db.sequentialAttemptEvents.toArray(),
+          await db.systemAttemptEvents
+            .toArray(),
         advances:
-          await db.sequentialAdvanceEvents.toArray()
+          await db.systemAdvanceEvents
+            .toArray()
       })
     ).subscribe({
       next: () => {
@@ -516,7 +783,7 @@
       },
       error: (error) => {
         console.error(
-          "Live review subscription error:",
+          "Live system-tile subscription error:",
           error
         );
       }
