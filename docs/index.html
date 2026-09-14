@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jet Schoolhouse - Reset Sync Test</title>
+  <title>Jet Schoolhouse - Full Quiz Sync Test</title>
 
   <style>
     body {
       font-family: Arial, sans-serif;
-      max-width: 700px;
+      max-width: 760px;
       margin: 50px auto;
       padding: 20px;
     }
@@ -34,38 +34,93 @@
       margin-top: 25px;
       font-size: 14px;
     }
+
+    .answer-record {
+      margin-top: 18px;
+      padding-top: 12px;
+      border-top: 1px solid #ccc;
+    }
   </style>
-  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-CS40tEUn.js"></script>
+  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-CNuas_Zb.js"></script>
 </head>
 
 <body>
+
   <h1>Jet Schoolhouse</h1>
-  <h2>Dexie Cloud Real Sequential Pass Test - Prototype 4</h2>
+  <h2>Dexie Cloud Full Quiz Test - Prototype 5</h2>
 
   <p><strong>Pilot:</strong> Joe</p>
 
   <div class="status">
-    <p><strong>Sequential Review</strong></p>
-    <p>Current Position: <span id="question">1</span> of 10</p>
-    <p>Resolved Questions: <span id="attempts">0</span></p>
-    <p>Question State: <span id="questionState">Unanswered</span></p>
-    <p>Attempts on This Question: <span id="questionAttempts">0</span></p>
+    <p><strong>Full Quiz</strong></p>
+
+    <p>
+      Current Position:
+      <span id="position">1</span> of 10
+    </p>
+
+    <p>
+      Question ID:
+      <span id="questionId">-</span>
+    </p>
+
+    <p>
+      Answered Questions:
+      <span id="answeredCount">0</span>
+    </p>
+
+    <p>
+      Correct So Far:
+      <span id="correctCount">0</span>
+    </p>
+
+    <p>
+      Quiz State:
+      <span id="quizState">In Progress</span>
+    </p>
+
+    <div class="answer-record">
+      <p>
+        <strong>Current Question Answer of Record:</strong>
+        <span id="answerOfRecord">None</span>
+      </p>
+
+      <p>
+        Raw Answer Events for Current Question:
+        <span id="rawEventCount">0</span>
+      </p>
+    </div>
   </div>
 
   <p>
     <button id="correctButton">Correct Answer</button>
     <button id="wrongButton">Wrong Answer</button>
-    <button id="nextButton" style="display:none;">Next Question</button>
-    <button id="startOverButton">Start Over</button>
   </p>
 
   <p id="message">Connecting to Dexie...</p>
 
   <div class="diagnostic">
-    <p><strong>Device ID:</strong> <span id="deviceId"></span></p>
-    <p><strong>Active Review ID:</strong> <span id="reviewId"></span></p>
-    <p><strong>Question ID:</strong> <span id="questionId"></span></p>
+    <p>
+      <strong>Device ID:</strong>
+      <span id="deviceId"></span>
+    </p>
+
+    <p>
+      <strong>Active Quiz ID:</strong>
+      <span id="quizId"></span>
+    </p>
+
+    <p>
+      <strong>Frozen Question Order:</strong>
+      <span id="questionOrder"></span>
+    </p>
+
+    <p>
+      <strong>Last Answer Timestamp:</strong>
+      <span id="lastTimestamp">None</span>
+    </p>
   </div>
+
 
 </body>
 </html>
