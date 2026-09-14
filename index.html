@@ -116,6 +116,11 @@
     </p>
 
     <p>
+      <strong>Question Usage Counts:</strong>
+      <span id="usageCounts"></span>
+    </p>
+
+    <p>
       <strong>Last Answer Timestamp:</strong>
       <span id="lastTimestamp">None</span>
     </p>
@@ -383,6 +388,9 @@
       const answerEvents =
         await getAnswerEvents();
 
+      const usageEvents =
+        await getUsageEvents();
+
       const activeQuiz =
         chooseActiveQuiz(quizEvents);
 
@@ -454,9 +462,26 @@
           event => event.correct
         ).length;
 
+      const usageCounts =
+        TEST_QUESTION_IDS.reduce(
+          (counts, questionId) => {
+            counts[questionId] =
+              usageEvents.filter(
+                event =>
+                  event.questionNumber ===
+                    questionId
+              ).length;
+
+            return counts;
+          },
+          {}
+        );
+
       return {
         activeQuiz,
         answerEvents,
+        usageEvents,
+        usageCounts,
         questionOrder,
         effectiveAnswers,
         currentPosition,
@@ -487,6 +512,18 @@
       document.getElementById("questionOrder")
         .textContent =
           state.questionOrder.join(", ");
+
+      document.getElementById("usageCounts")
+        .textContent =
+          TEST_QUESTION_IDS
+            .map(
+              questionId =>
+                "Q" +
+                questionId +
+                ": " +
+                state.usageCounts[questionId]
+            )
+            .join(", ");
 
       document.getElementById("answeredCount")
         .textContent =
