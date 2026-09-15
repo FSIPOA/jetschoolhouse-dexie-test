@@ -21172,10 +21172,11 @@
 		if (request.mode === "navigate") {
 			event.respondWith(fetch(request).then((response) => {
 				if (response && response.status === 200) {
-					const copy = response.clone();
+					const requestCopy = response.clone();
+					const appRootCopy = response.clone();
 					caches.open(CACHE_NAME).then((cache) => {
-						cache.put(request, copy);
-						cache.put(APP_ROOT, response.clone());
+						cache.put(request, requestCopy);
+						cache.put(APP_ROOT, appRootCopy);
 					});
 				}
 				return response;
