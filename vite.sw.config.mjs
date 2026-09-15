@@ -5,8 +5,9 @@ export default defineConfig({
     outDir: "sw-test",
     emptyOutDir: true,
     lib: {
+      name: "JetSchoolhouseServiceWorker",
       entry: "src/sw.js",
-      formats: ["es"],
+      formats: ["iife"],
       fileName: () => "sw.js"
     },
     minify: false
