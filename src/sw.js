@@ -42,6 +42,34 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Navigation requests: network first, cached app shell as offline fallback.
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, copy);
+              cache.put(APP_ROOT, response.clone());
+            });
+          }
+
+          return response;
+        })
+        .catch(() => {
+          return caches.match(request).then((cached) => {
+            return cached || caches.match(APP_ROOT);
+          });
+        })
+    );
+
+    return;
+  }
+
+  // Other same-origin application resources: cache first,
+  // with network retrieval and caching when not already available.
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) {

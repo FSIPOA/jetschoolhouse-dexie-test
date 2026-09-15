@@ -21169,6 +21169,23 @@
 		const request = event.request;
 		const url = new URL(request.url);
 		if (request.method !== "GET" || url.origin !== self.location.origin || !url.pathname.startsWith(APP_ROOT)) return;
+		if (request.mode === "navigate") {
+			event.respondWith(fetch(request).then((response) => {
+				if (response && response.status === 200) {
+					const copy = response.clone();
+					caches.open(CACHE_NAME).then((cache) => {
+						cache.put(request, copy);
+						cache.put(APP_ROOT, response.clone());
+					});
+				}
+				return response;
+			}).catch(() => {
+				return caches.match(request).then((cached) => {
+					return cached || caches.match(APP_ROOT);
+				});
+			}));
+			return;
+		}
 		event.respondWith(caches.match(request).then((cached) => {
 			if (cached) return cached;
 			return fetch(request).then((response) => {
