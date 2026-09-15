@@ -202,6 +202,9 @@
       tryUseServiceWorker: true
     });
 
+    // TEMPORARY: expose database for synchronization diagnostics.
+    window.jetSchoolhouseDb = db;
+
     async function getPassEvents() {
       return await db.systemPassEvents.toArray();
     }
