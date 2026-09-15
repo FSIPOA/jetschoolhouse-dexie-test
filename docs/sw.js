@@ -1,3 +1,5 @@
+importScripts("/jetschoolhouse-dexie-test/dexie-cloud-service-worker.min.js");
+
 const CACHE_NAME = "jet-schoolhouse-shell-v1";
 const APP_ROOT = "/jetschoolhouse-dexie-test/";
 const APP_SHELL = [

@@ -198,7 +198,8 @@
     db.cloud.configure({
       databaseUrl:
         "https://zenj0t5lt.dexie.cloud",
-      requireAuth: true
+      requireAuth: true,
+      tryUseServiceWorker: true
     });
 
     async function getPassEvents() {
