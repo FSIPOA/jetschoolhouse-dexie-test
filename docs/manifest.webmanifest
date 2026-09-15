@@ -1,0 +1,10 @@
+{
+  "name": "Jet Schoolhouse",
+  "short_name": "Jet Schoolhouse",
+  "description": "Jet Schoolhouse pilot training application",
+  "start_url": "/jetschoolhouse-dexie-test/",
+  "scope": "/jetschoolhouse-dexie-test/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff"
+}

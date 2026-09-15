@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Jet Schoolhouse - System Tiles Sync Test</title>
+  <link rel="manifest" href="/jetschoolhouse-dexie-test/manifest.webmanifest">
 
   <style>
     body {
@@ -85,5 +86,27 @@
     <p><strong>Question ID:</strong> <span id="questionId"></span></p>
   </div>
 
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker
+          .register("/jetschoolhouse-dexie-test/sw.js", {
+            scope: "/jetschoolhouse-dexie-test/"
+          })
+          .then((registration) => {
+            console.log(
+              "Jet Schoolhouse service worker registered:",
+              registration.scope
+            );
+          })
+          .catch((error) => {
+            console.error(
+              "Jet Schoolhouse service worker registration failed:",
+              error
+            );
+          });
+      });
+    }
+  </script>
 </body>
 </html>
