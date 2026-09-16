@@ -919,6 +919,36 @@
 </main>
 </div>
 
+<script type="module">
+import Dexie from "dexie";
+import dexieCloud from "dexie-cloud-addon";
+
+const jetSchoolhouseDb = new Dexie(
+  "JetSchoolhouseG550AllUpTest",
+  {
+    addons: [dexieCloud]
+  }
+);
+
+jetSchoolhouseDb.version(1).stores({
+  integrationTest: "id"
+});
+
+jetSchoolhouseDb.cloud.configure({
+  databaseUrl: "https://zenj0t5lt.dexie.cloud",
+  requireAuth: true,
+  tryUseServiceWorker: false
+});
+
+// Test 9A diagnostic access only.
+// No G550 training records use Dexie yet.
+window.jetSchoolhouseDb = jetSchoolhouseDb;
+
+console.log(
+  "Jet Schoolhouse Test 9A: Dexie Cloud infrastructure loaded."
+);
+</script>
+
 <script>
 
 const IMAGES = {
