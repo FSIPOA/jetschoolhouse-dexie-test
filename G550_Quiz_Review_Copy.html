@@ -947,6 +947,81 @@ jetSchoolhouseDb.version(2).stores({
   systemAdvanceEvents: "id"
 });
 
+// ==================== PROTOTYPE 9C: G550 STATE OBSERVER ====================
+// Integration boundary: READ existing G550 state; never participate in
+// G550 program logic. Removing this observer must leave G550 behavior intact.
+//
+// This first 9C step deliberately writes NOTHING to Dexie. It provides only
+// the isolated read/compare foundation that later adapter stages can use to
+// translate authoritative G550 state into the already-proven prototype events.
+
+const JSH_SEQPASS_STORAGE_KEY = "g550_sequential_pass_v1";
+
+let jshLastObservedSequentialRaw = null;
+
+function jshReadSequentialSnapshot() {
+  try {
+    const raw = localStorage.getItem(JSH_SEQPASS_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+
+    if (
+      !parsed ||
+      !Array.isArray(parsed.questions) ||
+      typeof parsed.currentIndex !== "number"
+    ) {
+      return null;
+    }
+
+    return {
+      raw: raw,
+      pass: parsed
+    };
+  } catch (error) {
+    console.warn("Jet Schoolhouse Dexie observer read failed:", error);
+    return null;
+  }
+}
+
+function jshObserveSequentialState() {
+  try {
+    const snapshot = jshReadSequentialSnapshot();
+    const raw = snapshot ? snapshot.raw : null;
+
+    if (raw === jshLastObservedSequentialRaw) return;
+
+    jshLastObservedSequentialRaw = raw;
+
+    if (snapshot) {
+      const pass = snapshot.pass;
+      console.log("JSH 9C Sequential observed:", {
+        currentIndex: pass.currentIndex,
+        inProgress: pass.inProgress,
+        answerCount: Array.isArray(pass.answers) ? pass.answers.length : 0,
+        questionId:
+          Array.isArray(pass.questions) &&
+          pass.questions[pass.currentIndex]
+            ? pass.questions[pass.currentIndex].id
+            : null
+      });
+    } else {
+      console.log("JSH 9C Sequential observed: no saved pass");
+    }
+
+    // Prototype 9C observer only. No Dexie writes in this stage.
+    // Future adapter stages translate this authoritative G550 snapshot
+    // into the proven Prototype 4 event model.
+  } catch (error) {
+    console.warn("Jet Schoolhouse Dexie observer failed:", error);
+  }
+}
+
+// Prototype 9C observer activation.
+// Runs independently of G550 program logic. It observes only; it does not
+// write to G550 storage or Dexie and is not required by any G550 function.
+setInterval(jshObserveSequentialState, 500);
+
 jetSchoolhouseDb.cloud.configure({
   databaseUrl: "https://zenj0t5lt.dexie.cloud",
   requireAuth: true,
