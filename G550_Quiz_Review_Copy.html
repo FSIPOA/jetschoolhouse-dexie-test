@@ -934,6 +934,19 @@ jetSchoolhouseDb.version(1).stores({
   integrationTest: "id"
 });
 
+jetSchoolhouseDb.version(2).stores({
+  integrationTest: "id",
+  sequentialPassEvents: "id",
+  sequentialAttemptEvents: "id",
+  sequentialAdvanceEvents: "id",
+  fullQuizPassEvents: "id",
+  fullQuizAnswerEvents: "id",
+  fullQuizUsageEvents: "id",
+  systemPassEvents: "id",
+  systemAttemptEvents: "id",
+  systemAdvanceEvents: "id"
+});
+
 jetSchoolhouseDb.cloud.configure({
   databaseUrl: "https://zenj0t5lt.dexie.cloud",
   requireAuth: true,
