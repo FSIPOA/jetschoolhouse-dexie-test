@@ -1288,6 +1288,23 @@ function jshObserveSequentialState() {
         jshSequentialRestartObserved = false;
       }
 
+      // Prototype 9F pass-identity boundary.
+      // Every ordinary authoritative G550 Sequential pass must have a
+      // persistent Dexie identity before any event belonging to it is written.
+      // Explicit Start Over remains reserved for parent/child generation logic.
+      if (!jshSequentialRestartObserved) {
+        const identityPass = pass;
+
+        jshQueueDexieWrite(
+          "9F ensure Sequential pass identity",
+          async () => {
+            await jshFindOrCreateInitialSequentialPass(
+              identityPass
+            );
+          }
+        );
+      }
+
       if (
         previousPass &&
         currentInProgress &&
@@ -1356,6 +1373,24 @@ function jshObserveSequentialState() {
           attemptNumber: currentInProgress.attemptCount,
           correct: currentInProgress.isCorrect === true
         });
+
+        // Prototype 9F resolved attempt boundary.
+        // The pass identity must already exist for this active pass.
+        const resolvedAttemptPass = pass;
+        const resolvedAttemptQuestionId = currentInProgress.qid;
+        const resolvedAttemptCorrect =
+          currentInProgress.isCorrect === true;
+
+        jshQueueDexieWrite(
+          "9F Sequential resolved attempt",
+          async () => {
+            await jshWriteSequentialAttempt(
+              resolvedAttemptPass,
+              resolvedAttemptQuestionId,
+              resolvedAttemptCorrect
+            );
+          }
+        );
       }
 
       if (
