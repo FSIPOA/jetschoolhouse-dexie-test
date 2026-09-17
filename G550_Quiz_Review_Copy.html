@@ -1099,6 +1099,49 @@ async function jshFindOrCreateInitialSequentialPass(pass) {
   return record;
 }
 
+// Write one immutable Sequential attempt event using the proven
+// Prototype 4 event shape. The G550 pass is resolved to its persistent
+// Dexie reviewId before the attempt is written.
+async function jshWriteSequentialAttempt(
+  pass,
+  questionId,
+  correct
+) {
+  const passRecord =
+    await jshFindSequentialPassRecord(pass);
+
+  if (!passRecord) {
+    throw new Error(
+      "Cannot write Sequential attempt: Dexie pass identity not found."
+    );
+  }
+
+  const event = {
+    id: crypto.randomUUID(),
+    deviceId: jshDeviceId,
+    reviewId: passRecord.reviewId,
+    questionNumber: questionId,
+    correct: correct,
+    timestamp: Date.now()
+  };
+
+  await jetSchoolhouseDb.sequentialAttemptEvents.add(
+    event
+  );
+
+  console.log(
+    "JSH 9F WROTE SEQUENTIAL ATTEMPT:",
+    {
+      id: event.id,
+      reviewId: event.reviewId,
+      questionNumber: event.questionNumber,
+      correct: event.correct
+    }
+  );
+
+  return event;
+}
+
 // Prototype 9F diagnostic trigger only.
 // Deliberately invokes the first real Sequential pass-identity write
 // through the serialized adapter queue. Remove after 9F validation.
@@ -1261,6 +1304,39 @@ function jshObserveSequentialState() {
           attemptNumber: currentInProgress.attemptCount,
           correct: false
         });
+
+        // Prototype 9F first live attempt boundary.
+        // Queue exactly one immutable Dexie event for this observed
+        // unresolved wrong attempt. G550 remains authoritative.
+        const attemptPass = pass;
+        const attemptQuestionId = currentInProgress.qid;
+
+        jshQueueDexieWrite(
+          "9F Sequential unresolved wrong attempt",
+          async () => {
+            let passRecord =
+              await jshFindSequentialPassRecord(attemptPass);
+
+            if (!passRecord) {
+              if (jshSequentialRestartObserved) {
+                throw new Error(
+                  "Cannot establish initial Sequential pass identity during explicit Start Over."
+                );
+              }
+
+              passRecord =
+                await jshFindOrCreateInitialSequentialPass(
+                  attemptPass
+                );
+            }
+
+            await jshWriteSequentialAttempt(
+              attemptPass,
+              attemptQuestionId,
+              false
+            );
+          }
+        );
       }
 
       if (
