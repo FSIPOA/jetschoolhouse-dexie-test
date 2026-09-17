@@ -957,7 +957,44 @@ jetSchoolhouseDb.version(2).stores({
 
 const JSH_SEQPASS_STORAGE_KEY = "g550_sequential_pass_v1";
 
+// ==================== PROTOTYPE 9E: ADAPTER IDENTITY LAYER ====================
+// Adapter-owned metadata only. This does not alter authoritative G550 state.
+const JSH_DEVICE_ID_KEY = "jetschoolhouse_g550_device_id";
+
+function jshGetDeviceId() {
+  try {
+    let deviceId = localStorage.getItem(JSH_DEVICE_ID_KEY);
+
+    if (!deviceId) {
+      deviceId = crypto.randomUUID();
+      localStorage.setItem(JSH_DEVICE_ID_KEY, deviceId);
+    }
+
+    return deviceId;
+  } catch (error) {
+    console.warn("Jet Schoolhouse device identity failed:", error);
+    return null;
+  }
+}
+
+const jshDeviceId = jshGetDeviceId();
+
+console.log("JSH 9E Device identity:", jshDeviceId);
+
 let jshLastObservedSequentialRaw = null;
+let jshLastObservedSequentialPass = null;
+
+// Adapter-owned transient signal only.
+// Set by the existing Sequential Start Over boundary and consumed by
+// the observer when it sees the replacement pass.
+let jshSequentialRestartObserved = false;
+
+// Cross-script adapter doorbell.
+// The ordinary G550 script may ring this when the user explicitly
+// chooses Sequential Review Start Over. No G550 state is stored here.
+window.jshSignalSequentialRestart = function () {
+  jshSequentialRestartObserved = true;
+};
 
 function jshReadSequentialSnapshot() {
   try {
@@ -991,10 +1028,137 @@ function jshObserveSequentialState() {
 
     if (raw === jshLastObservedSequentialRaw) return;
 
+    const previousPass = jshLastObservedSequentialPass;
+
     jshLastObservedSequentialRaw = raw;
+    jshLastObservedSequentialPass = snapshot ? snapshot.pass : null;
 
     if (snapshot) {
       const pass = snapshot.pass;
+
+      // ==================== PROTOTYPE 9D: DRY-RUN TRANSLATOR ====================
+      // Compare authoritative G550 snapshots only. This stage writes NOTHING
+      // to Dexie and changes NOTHING in G550 program state.
+      const previousInProgress =
+        previousPass ? previousPass.inProgress : null;
+      const currentInProgress = pass.inProgress;
+
+      // Prototype 9D new-pass classifier.
+      // A genuine G550 Start Over replaces the saved Sequential pass with
+      // a newly shuffled question order at index 0 with no answers or
+      // in-progress question. Resume/reload reuses the existing order.
+      const previousQuestionOrder =
+        previousPass && Array.isArray(previousPass.questions)
+          ? previousPass.questions.map(q => q.id).join(",")
+          : null;
+
+      const currentQuestionOrder =
+        Array.isArray(pass.questions)
+          ? pass.questions.map(q => q.id).join(",")
+          : null;
+
+      if (jshSequentialRestartObserved) {
+        console.log("JSH 9E NEW PASS DIAGNOSTIC:", {
+          hasPreviousPass: !!previousPass,
+          restartFlag: jshSequentialRestartObserved,
+          currentIndexIsZero: pass.currentIndex === 0,
+          inProgressIsNull: pass.inProgress === null,
+          answersIsArray: Array.isArray(pass.answers),
+          answersLength:
+            Array.isArray(pass.answers) ? pass.answers.length : null,
+          hasPreviousQuestionOrder: previousQuestionOrder !== null,
+          hasCurrentQuestionOrder: currentQuestionOrder !== null,
+          questionOrderChanged:
+            previousQuestionOrder !== currentQuestionOrder,
+          previousFirstQuestionId:
+            previousPass &&
+            Array.isArray(previousPass.questions) &&
+            previousPass.questions.length
+              ? previousPass.questions[0].id
+              : null,
+          currentFirstQuestionId:
+            Array.isArray(pass.questions) && pass.questions.length
+              ? pass.questions[0].id
+              : null
+        });
+      }
+
+      if (
+        previousPass &&
+        jshSequentialRestartObserved &&
+        pass.currentIndex === 0 &&
+        pass.inProgress === null &&
+        Array.isArray(pass.answers) &&
+        pass.answers.length === 0 &&
+        previousQuestionOrder !== null &&
+        currentQuestionOrder !== null &&
+        previousQuestionOrder !== currentQuestionOrder
+      ) {
+        console.log("JSH 9D WOULD EMIT NEW PASS:", {
+          questionCount: pass.questions.length,
+          firstQuestionId:
+            pass.questions.length ? pass.questions[0].id : null
+        });
+
+        // Consume the one-shot restart signal only after the replacement
+        // pass has actually been observed.
+        jshSequentialRestartObserved = false;
+      }
+
+      if (
+        previousPass &&
+        currentInProgress &&
+        !currentInProgress.resolved &&
+        typeof currentInProgress.attemptCount === "number" &&
+        (
+          !previousInProgress ||
+          previousInProgress.qid !== currentInProgress.qid ||
+          previousInProgress.attemptCount !== currentInProgress.attemptCount
+        )
+      ) {
+        console.log("JSH 9D WOULD EMIT ATTEMPT:", {
+          questionId: currentInProgress.qid,
+          attemptNumber: currentInProgress.attemptCount,
+          correct: false
+        });
+      }
+
+      if (
+        previousPass &&
+        currentInProgress &&
+        currentInProgress.resolved === true &&
+        typeof currentInProgress.attemptCount === "number" &&
+        (
+          !previousInProgress ||
+          previousInProgress.qid !== currentInProgress.qid ||
+          previousInProgress.attemptCount !== currentInProgress.attemptCount ||
+          previousInProgress.resolved !== true
+        )
+      ) {
+        console.log("JSH 9D WOULD EMIT ATTEMPT:", {
+          questionId: currentInProgress.qid,
+          attemptNumber: currentInProgress.attemptCount,
+          correct: currentInProgress.isCorrect === true
+        });
+      }
+
+      if (
+        previousPass &&
+        typeof previousPass.currentIndex === "number" &&
+        pass.currentIndex > previousPass.currentIndex
+      ) {
+        const previousQuestion =
+          Array.isArray(previousPass.questions) &&
+          previousPass.questions[previousPass.currentIndex]
+            ? previousPass.questions[previousPass.currentIndex]
+            : null;
+
+        console.log("JSH 9D WOULD EMIT ADVANCE:", {
+          questionId: previousQuestion ? previousQuestion.id : null,
+          fromIndex: previousPass.currentIndex,
+          toIndex: pass.currentIndex
+        });
+      }
       console.log("JSH 9C Sequential observed:", {
         currentIndex: pass.currentIndex,
         inProgress: pass.inProgress,
@@ -3544,6 +3708,13 @@ function showResumePrompt(resumeIndex, isComplete, mode, sysId) {
   };
   restartBtn.onclick = () => {
     document.getElementById("resume-prompt").style.display = "none";
+
+    // Prototype 9E adapter observation only.
+    // Distinguishes explicit Start Over from ordinary index-0 re-entry.
+    if (typeof window.jshSignalSequentialRestart === "function") {
+      window.jshSignalSequentialRestart();
+    }
+
     resetSequentialProgressFlags();
     beginSequentialAt(0);
   };
