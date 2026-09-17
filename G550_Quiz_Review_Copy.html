@@ -1106,26 +1106,6 @@ async function jshFindOrCreateSequentialChildPass(
   previousPass,
   replacementPass
 ) {
-  const existing =
-    await jshFindSequentialPassRecord(replacementPass);
-
-  if (existing) {
-    console.log(
-      "JSH 9F FOUND EXISTING SEQUENTIAL CHILD PASS:",
-      {
-        reviewId: existing.reviewId,
-        parentReviewId: existing.parentReviewId,
-        generation: existing.generation,
-        questionCount:
-          Array.isArray(existing.questions)
-            ? existing.questions.length
-            : null
-      }
-    );
-
-    return existing;
-  }
-
   if (
     !replacementPass ||
     !Array.isArray(replacementPass.questions) ||
@@ -1145,10 +1125,46 @@ async function jshFindOrCreateSequentialChildPass(
     );
   }
 
-  if (typeof parentRecord.generation !== "number") {
+  if (
+    typeof parentRecord.reviewId !== "string" ||
+    !parentRecord.reviewId ||
+    typeof parentRecord.generation !== "number"
+  ) {
     throw new Error(
-      "Cannot create Sequential child pass: parent generation is invalid."
+      "Cannot create Sequential child pass: parent identity or generation is invalid."
     );
+  }
+
+  const expectedGeneration =
+    parentRecord.generation + 1;
+
+  const existing =
+    await jshFindSequentialPassRecord(replacementPass);
+
+  if (existing) {
+    if (
+      existing.parentReviewId !== parentRecord.reviewId ||
+      existing.generation !== expectedGeneration
+    ) {
+      throw new Error(
+        "Cannot reuse Sequential child pass: existing lineage does not match exact parent."
+      );
+    }
+
+    console.log(
+      "JSH 9F FOUND EXISTING SEQUENTIAL CHILD PASS:",
+      {
+        reviewId: existing.reviewId,
+        parentReviewId: existing.parentReviewId,
+        generation: existing.generation,
+        questionCount:
+          Array.isArray(existing.questions)
+            ? existing.questions.length
+            : null
+      }
+    );
+
+    return existing;
   }
 
   const reviewId = crypto.randomUUID();
@@ -1157,7 +1173,7 @@ async function jshFindOrCreateSequentialChildPass(
     id: reviewId,
     reviewId: reviewId,
     parentReviewId: parentRecord.reviewId,
-    generation: parentRecord.generation + 1,
+    generation: expectedGeneration,
     deviceId: jshDeviceId,
     createdAt: Date.now(),
     questions: replacementPass.questions.map(q => q.id)
