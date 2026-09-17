@@ -1099,6 +1099,89 @@ async function jshFindOrCreateInitialSequentialPass(pass) {
   return record;
 }
 
+// Establish the persistent Dexie identity for an explicit Sequential
+// Start Over replacement pass. The previous authoritative G550 pass
+// must resolve to its exact Dexie parent; lineage is never guessed.
+async function jshFindOrCreateSequentialChildPass(
+  previousPass,
+  replacementPass
+) {
+  const existing =
+    await jshFindSequentialPassRecord(replacementPass);
+
+  if (existing) {
+    console.log(
+      "JSH 9F FOUND EXISTING SEQUENTIAL CHILD PASS:",
+      {
+        reviewId: existing.reviewId,
+        parentReviewId: existing.parentReviewId,
+        generation: existing.generation,
+        questionCount:
+          Array.isArray(existing.questions)
+            ? existing.questions.length
+            : null
+      }
+    );
+
+    return existing;
+  }
+
+  if (
+    !replacementPass ||
+    !Array.isArray(replacementPass.questions) ||
+    replacementPass.questions.length === 0
+  ) {
+    throw new Error(
+      "Cannot create Sequential child pass without replacement question order."
+    );
+  }
+
+  const parentRecord =
+    await jshFindSequentialPassRecord(previousPass);
+
+  if (!parentRecord) {
+    throw new Error(
+      "Cannot create Sequential child pass: exact parent identity not found."
+    );
+  }
+
+  if (typeof parentRecord.generation !== "number") {
+    throw new Error(
+      "Cannot create Sequential child pass: parent generation is invalid."
+    );
+  }
+
+  const reviewId = crypto.randomUUID();
+
+  const record = {
+    id: reviewId,
+    reviewId: reviewId,
+    parentReviewId: parentRecord.reviewId,
+    generation: parentRecord.generation + 1,
+    deviceId: jshDeviceId,
+    createdAt: Date.now(),
+    questions: replacementPass.questions.map(q => q.id)
+  };
+
+  await jetSchoolhouseDb.sequentialPassEvents.add(record);
+
+  console.log(
+    "JSH 9F CREATED SEQUENTIAL CHILD PASS:",
+    {
+      reviewId: record.reviewId,
+      parentReviewId: record.parentReviewId,
+      generation: record.generation,
+      questionCount: record.questions.length,
+      firstQuestionId:
+        record.questions.length
+          ? record.questions[0]
+          : null
+    }
+  );
+
+  return record;
+}
+
 // Write one immutable Sequential attempt event using the proven
 // Prototype 4 event shape. The G550 pass is resolved to its persistent
 // Dexie reviewId before the attempt is written.
@@ -1280,6 +1363,19 @@ function jshObserveSequentialState() {
           ? pass.questions.map(q => q.id).join(",")
           : null;
 
+      // Capture this observer cycle's explicit Start Over classification
+      // before the one-shot restart signal is consumed.
+      const isExplicitSequentialRestart =
+        !!previousPass &&
+        jshSequentialRestartObserved &&
+        pass.currentIndex === 0 &&
+        pass.inProgress === null &&
+        Array.isArray(pass.answers) &&
+        pass.answers.length === 0 &&
+        previousQuestionOrder !== null &&
+        currentQuestionOrder !== null &&
+        previousQuestionOrder !== currentQuestionOrder;
+
       if (jshSequentialRestartObserved) {
         console.log("JSH 9E NEW PASS DIAGNOSTIC:", {
           hasPreviousPass: !!previousPass,
@@ -1306,25 +1402,31 @@ function jshObserveSequentialState() {
         });
       }
 
-      if (
-        previousPass &&
-        jshSequentialRestartObserved &&
-        pass.currentIndex === 0 &&
-        pass.inProgress === null &&
-        Array.isArray(pass.answers) &&
-        pass.answers.length === 0 &&
-        previousQuestionOrder !== null &&
-        currentQuestionOrder !== null &&
-        previousQuestionOrder !== currentQuestionOrder
-      ) {
+      if (isExplicitSequentialRestart) {
         console.log("JSH 9D WOULD EMIT NEW PASS:", {
           questionCount: pass.questions.length,
           firstQuestionId:
             pass.questions.length ? pass.questions[0].id : null
         });
 
+        // Prototype 9F live Start Over lineage boundary.
+        // Preserve the exact authoritative parent and replacement snapshots
+        // for the serialized Dexie operation.
+        const restartParentPass = previousPass;
+        const restartReplacementPass = pass;
+
+        jshQueueDexieWrite(
+          "9F Sequential Start Over child pass",
+          async () => {
+            await jshFindOrCreateSequentialChildPass(
+              restartParentPass,
+              restartReplacementPass
+            );
+          }
+        );
+
         // Consume the one-shot restart signal only after the replacement
-        // pass has actually been observed.
+        // pass has actually been observed and its lineage write has been queued.
         jshSequentialRestartObserved = false;
       }
 
@@ -1332,7 +1434,7 @@ function jshObserveSequentialState() {
       // Every ordinary authoritative G550 Sequential pass must have a
       // persistent Dexie identity before any event belonging to it is written.
       // Explicit Start Over remains reserved for parent/child generation logic.
-      if (!jshSequentialRestartObserved) {
+      if (!isExplicitSequentialRestart) {
         const identityPass = pass;
 
         jshQueueDexieWrite(
