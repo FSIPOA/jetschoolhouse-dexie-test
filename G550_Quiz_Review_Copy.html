@@ -1473,22 +1473,6 @@ function jshObserveSequentialState() {
         jshQueueDexieWrite(
           "9F Sequential unresolved wrong attempt",
           async () => {
-            let passRecord =
-              await jshFindSequentialPassRecord(attemptPass);
-
-            if (!passRecord) {
-              if (jshSequentialRestartObserved) {
-                throw new Error(
-                  "Cannot establish initial Sequential pass identity during explicit Start Over."
-                );
-              }
-
-              passRecord =
-                await jshFindOrCreateInitialSequentialPass(
-                  attemptPass
-                );
-            }
-
             await jshWriteSequentialAttempt(
               attemptPass,
               attemptQuestionId,
