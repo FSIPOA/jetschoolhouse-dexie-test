@@ -981,6 +981,146 @@ const jshDeviceId = jshGetDeviceId();
 
 console.log("JSH 9E Device identity:", jshDeviceId);
 
+// ==================== PROTOTYPE 9F: SERIALIZED DEXIE WRITER ====================
+//
+// Adapter-owned write queue. Dexie operations are chained here so that
+// observer cycles can never perform overlapping training-data writes.
+// Nothing is connected to this queue yet.
+
+let jshDexieWriteQueue = Promise.resolve();
+
+function jshQueueDexieWrite(label, operation) {
+  jshDexieWriteQueue = jshDexieWriteQueue
+    .then(async () => {
+      await operation();
+    })
+    .catch(error => {
+      console.error(
+        "Jet Schoolhouse Dexie write failed:",
+        label,
+        error
+      );
+    });
+
+  return jshDexieWriteQueue;
+}
+
+// Stable representation of the authoritative G550 Sequential question order.
+// This is recognition metadata only; it is not the persistent reviewId.
+function jshGetSequentialPassFingerprint(pass) {
+  if (!pass || !Array.isArray(pass.questions)) {
+    return null;
+  }
+
+  return pass.questions.map(q => q.id).join(",");
+}
+
+// Dexie remains authoritative for persistent pass identity.
+// The G550 question order is used only to recognize the corresponding
+// Sequential pass record already stored in Dexie.
+async function jshFindSequentialPassRecord(pass) {
+  const fingerprint = jshGetSequentialPassFingerprint(pass);
+
+  if (!fingerprint) {
+    return null;
+  }
+
+  const records =
+    await jetSchoolhouseDb.sequentialPassEvents.toArray();
+
+  return (
+    records.find(record =>
+      Array.isArray(record.questions) &&
+      record.questions.join(",") === fingerprint
+    ) || null
+  );
+}
+
+// Establish the persistent Dexie identity for the first observed G550
+// Sequential pass. This function is intentionally limited to generation 0.
+// Later Start Over handling will create child passes separately.
+async function jshFindOrCreateInitialSequentialPass(pass) {
+  const existing =
+    await jshFindSequentialPassRecord(pass);
+
+  if (existing) {
+    console.log(
+      "JSH 9F FOUND EXISTING SEQUENTIAL PASS:",
+      {
+        reviewId: existing.reviewId,
+        generation: existing.generation,
+        questionCount:
+          Array.isArray(existing.questions)
+            ? existing.questions.length
+            : null
+      }
+    );
+
+    return existing;
+  }
+
+  if (
+    !pass ||
+    !Array.isArray(pass.questions) ||
+    pass.questions.length === 0
+  ) {
+    throw new Error(
+      "Cannot create Sequential pass identity without question order."
+    );
+  }
+
+  const reviewId = crypto.randomUUID();
+
+  const record = {
+    id: reviewId,
+    reviewId: reviewId,
+    parentReviewId: null,
+    generation: 0,
+    deviceId: jshDeviceId,
+    createdAt: Date.now(),
+    questions: pass.questions.map(q => q.id)
+  };
+
+  await jetSchoolhouseDb.sequentialPassEvents.add(record);
+
+  console.log(
+    "JSH 9F CREATED INITIAL SEQUENTIAL PASS:",
+    {
+      reviewId: record.reviewId,
+      generation: record.generation,
+      questionCount: record.questions.length,
+      firstQuestionId:
+        record.questions.length
+          ? record.questions[0]
+          : null
+    }
+  );
+
+  return record;
+}
+
+// Prototype 9F diagnostic trigger only.
+// Deliberately invokes the first real Sequential pass-identity write
+// through the serialized adapter queue. Remove after 9F validation.
+window.jshTestCreateInitialSequentialPass = function () {
+  return jshQueueDexieWrite(
+    "9F initial Sequential pass identity",
+    async () => {
+      const snapshot = jshReadSequentialSnapshot();
+
+      if (!snapshot) {
+        throw new Error(
+          "No authoritative G550 Sequential pass is currently saved."
+        );
+      }
+
+      return await jshFindOrCreateInitialSequentialPass(
+        snapshot.pass
+      );
+    }
+  );
+};
+
 let jshLastObservedSequentialRaw = null;
 let jshLastObservedSequentialPass = null;
 
