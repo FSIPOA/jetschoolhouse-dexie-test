@@ -1142,6 +1142,46 @@ async function jshWriteSequentialAttempt(
   return event;
 }
 
+// Write one immutable Sequential advance event using the same
+// event philosophy already proven by the System Review prototype.
+// The diagnostic fromIndex/toIndex values are deliberately not persisted.
+async function jshWriteSequentialAdvance(
+  pass,
+  questionId
+) {
+  const passRecord =
+    await jshFindSequentialPassRecord(pass);
+
+  if (!passRecord) {
+    throw new Error(
+      "Cannot write Sequential advance: Dexie pass identity not found."
+    );
+  }
+
+  const event = {
+    id: crypto.randomUUID(),
+    deviceId: jshDeviceId,
+    reviewId: passRecord.reviewId,
+    questionNumber: questionId,
+    timestamp: Date.now()
+  };
+
+  await jetSchoolhouseDb.sequentialAdvanceEvents.add(
+    event
+  );
+
+  console.log(
+    "JSH 9F WROTE SEQUENTIAL ADVANCE:",
+    {
+      id: event.id,
+      reviewId: event.reviewId,
+      questionNumber: event.questionNumber
+    }
+  );
+
+  return event;
+}
+
 // Prototype 9F diagnostic trigger only.
 // Deliberately invokes the first real Sequential pass-identity write
 // through the serialized adapter queue. Remove after 9F validation.
@@ -1409,6 +1449,28 @@ function jshObserveSequentialState() {
           fromIndex: previousPass.currentIndex,
           toIndex: pass.currentIndex
         });
+
+        // Prototype 9F live advance boundary.
+        // Record the question the student is leaving, attached to the
+        // persistent identity of the authoritative pass being advanced.
+        if (!previousQuestion) {
+          console.error(
+            "JSH 9F SEQUENTIAL ADVANCE NOT WRITTEN: previous question missing."
+          );
+        } else {
+          const advancePass = previousPass;
+          const advanceQuestionId = previousQuestion.id;
+
+          jshQueueDexieWrite(
+            "9F Sequential advance",
+            async () => {
+              await jshWriteSequentialAdvance(
+                advancePass,
+                advanceQuestionId
+              );
+            }
+          );
+        }
       }
       console.log("JSH 9C Sequential observed:", {
         currentIndex: pass.currentIndex,
