@@ -479,7 +479,7 @@
     .syn-spacer { height: 8px; }
   }
 </style>
-  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-GjOap3rO.js"></script>
+  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-Bw2FaHm3.js"></script>
 </head>
 <body>
 
@@ -3356,12 +3356,36 @@ function resumeFullQuizReview(saved) {
   renderReviewQuestion();
 }
 
-function startSequential() {
+async function startSequential() {
+  // Entry-boundary reconciliation: install the active synchronized Sequential
+  // pass before native G550 decides whether this is a fresh start or resume.
+  let inbound = null;
+  try {
+    if (typeof window.jshInstallInboundSequentialState === "function") {
+      inbound = await window.jshInstallInboundSequentialState();
+    }
+  } catch (error) {
+    console.error(
+      "Jet Schoolhouse Sequential entry reconciliation failed:",
+      error
+    );
+  }
+
   const saved = loadSequentialPass();
   if (saved && saved.currentIndex >= saved.questions.length) {
     showResumePrompt(0, true);
   } else if (saved && saved.currentIndex > 0) {
     showResumePrompt(saved.currentIndex, false);
+  } else if (
+    inbound &&
+    inbound.installed &&
+    saved &&
+    saved.currentIndex === 0
+  ) {
+    // Preserve a synchronized Q1 pass exactly. A resolved or partially
+    // attempted Q1 must not be replaced by beginSequentialAt(0)'s fresh
+    // shuffle merely because its currentIndex is still zero.
+    beginSequentialAt(0, true);
   } else {
     beginSequentialAt(0);
   }
@@ -3520,8 +3544,10 @@ function showResumePrompt(resumeIndex, isComplete, mode, sysId) {
 // "Continue" button and must reuse the exact saved order rather than
 // reshuffle it (loadSequentialPass falls back to building fresh only as a
 // safety net).
-function beginSequentialAt(index) {
-  const pass = (index === 0) ? buildSequentialPass() : (loadSequentialPass() || buildSequentialPass());
+function beginSequentialAt(index, preserveSavedAtZero) {
+  const pass = (index === 0 && !preserveSavedAtZero)
+    ? buildSequentialPass()
+    : (loadSequentialPass() || buildSequentialPass());
   quizMode = "sequential";
   currentSystem = "";
   currentQuiz = pass.questions;
