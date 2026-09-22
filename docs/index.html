@@ -479,7 +479,7 @@
     .syn-spacer { height: 8px; }
   }
 </style>
-  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-C_OlIo4p.js"></script>
+  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-GjOap3rO.js"></script>
 </head>
 <body>
 
@@ -4230,6 +4230,8 @@ function persistPassPosition(inProgress, index) {
 function selectAnswer(chosen) {
   const q = currentQuiz[currentIndex];
   const isCorrect = chosen === q.correct;
+  const jshSequentialAnswerTimestamp = quizMode === "sequential" ? Date.now() : null;
+  const jshSequentialAnswerQuestions = quizMode === "sequential" ? structuredClone(currentQuiz) : null;
   const jshSystemTileAnswerTimestamp = quizMode === "system" ? Date.now() : null;
   const jshSystemTileAnswerQuestions = quizMode === "system" ? structuredClone(currentQuiz) : null;
   const hasSynoptic = !!q.synoptic;
@@ -4326,6 +4328,19 @@ function selectAnswer(chosen) {
       fb.textContent = "\u2717 Incorrect. Try again.";
       persistPassPosition({ qid: q.id, attemptCount: attemptCount, wrong: wrongThisQuestion.slice() });
     }
+  }
+
+  if (
+    quizMode === "sequential" &&
+    typeof window.jshSignalSequentialAnswer === "function"
+  ) {
+    window.jshSignalSequentialAnswer(
+      jshSequentialAnswerQuestions,
+      q.id,
+      isCorrect,
+      chosen,
+      jshSequentialAnswerTimestamp
+    );
   }
 
   if (
