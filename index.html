@@ -5449,7 +5449,12 @@ let lastNativeFingerprint = "";
 async function reconcile() {
   if (running) return;
   running = true;
-  setStatus(false, "Synchronizing device and Box");
+  // Amber means synchronization has not yet been established, or a prior
+  // synchronization attempt failed. Once healthy/green, routine background
+  // reconciliation stays green unless this cycle proves a real problem.
+  if (!window.jshBoxSyncStatus?.green) {
+    setStatus(false, "Synchronizing device and Box");
+  }
   try {
     const local0 = applyResetSemantics(captureNative());
     await publish(local0);
