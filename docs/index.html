@@ -479,7 +479,7 @@
     .syn-spacer { height: 8px; }
   }
 </style>
-  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-Bw2FaHm3.js"></script>
+  <script type="module" crossorigin src="/jetschoolhouse-dexie-test/assets/index-QjBwAyS3.js"></script>
 </head>
 <body>
 
@@ -919,7 +919,6 @@
 
 </main>
 </div>
-
 
 <script>
 
@@ -2677,46 +2676,191 @@ const SEQUENTIAL_QUESTIONS = (() => {
 })();
 
 // ==================== PROGRESS PERSISTENCE ====================
-// Stored locally (no server, works fully offline). Tracks, per question id,
-// whether it's been resolved (answered correctly, or reached 3 wrong
-// attempts) during a Sequential Review pass, plus a rolling attempt history
-// for future topic-mastery scoring.
+// Stored locally (no server needed, works fully offline). Data format v2
+// is "sync-ready": every saved fact carries what a future cross-device
+// merge will need, so the sync backend can be added later without a
+// second migration of customers' progress.
+//
+//   perQuestion[qid].attempts       [{ id, correct, ts }] -- newest 10 kept.
+//                                   id is unique per attempt, so a merge
+//                                   can never count the same answer twice.
+//   perQuestion[qid].seqDoneAt      when last resolved in Sequential Review (0 = never)
+//   perQuestion[qid].tileDoneAt     when last resolved in tile drill (0 = never)
+//   perQuestion[qid].fullQuizUsage  { deviceId: count } -- per-device draw
+//                                   counts for the 50-Question Test
+//                                   fairness rotation; total = sum.
+//   clears.seq                      when Sequential Review was last Started Over
+//   clears.tile[sysId]              when that system's tile-drill completion
+//                                   was last reset (Reset System Progress)
+//
+// A question counts as done only if it was resolved AFTER the most recent
+// clear. That's what will let a reset on one device win over stale
+// checkmarks from another device during sync.
+//
+// The storage slot keeps its original name so existing progress is found;
+// the format version lives inside the saved object. v1 data is upgraded
+// automatically on first load (a one-time backup of the v1 data is kept
+// under PROGRESS_BACKUP_KEY).
 const PROGRESS_KEY = "g550_progress_v1";
+const PROGRESS_BACKUP_KEY = "g550_progress_v1_backup";
+const PROGRESS_VERSION = 2;
+const ATTEMPT_HISTORY_MAX = 10;
+const DEVICE_KEY = "g550_device_id";
+const LEGACY_TS = 1;   // "happened at some point before format v2" -- older than any real clear
+
+function randomHex(len) {
+  let out = "";
+  try {
+    const bytes = new Uint8Array(Math.ceil(len / 2));
+    crypto.getRandomValues(bytes);
+    bytes.forEach(b => { out += ("0" + b.toString(16)).slice(-2); });
+  } catch (e) {
+    while (out.length < len) out += Math.floor(Math.random() * 16).toString(16);
+  }
+  return out.slice(0, len);
+}
+
+// One permanent random ID per device/browser, created on first use. Cached
+// in memory so it stays stable for the session even if storage is blocked.
+let _deviceId = null;
+function getDeviceId() {
+  if (_deviceId) return _deviceId;
+  try { _deviceId = localStorage.getItem(DEVICE_KEY); } catch (e) {}
+  if (!_deviceId) {
+    _deviceId = "d" + randomHex(12);
+    try { localStorage.setItem(DEVICE_KEY, _deviceId); } catch (e) {}
+  }
+  return _deviceId;
+}
+
+// Globally unique ID for an attempt or a pass: device + time + random.
+function newRecordId() {
+  return getDeviceId() + "-" + Date.now().toString(36) + "-" + randomHex(6);
+}
+
+function emptyProgress() {
+  return { version: PROGRESS_VERSION, perQuestion: {}, clears: { seq: 0, tile: {} } };
+}
+function newQuestionRecord() {
+  return { attempts: [], seqDoneAt: 0, tileDoneAt: 0, fullQuizUsage: {} };
+}
+function ensureRecord(progress, qid) {
+  if (!progress.perQuestion[qid]) progress.perQuestion[qid] = newQuestionRecord();
+  const rec = progress.perQuestion[qid];
+  if (!Array.isArray(rec.attempts)) rec.attempts = [];
+  if (!rec.fullQuizUsage || typeof rec.fullQuizUsage !== "object") rec.fullQuizUsage = {};
+  return rec;
+}
+
+// Upgrades v1 data (or repairs any malformed v2 data) into a clean v2
+// object. Also used by Load Progress, so an old exported file still loads.
+//   - v1 attempts get a deterministic ID ("L-<qid>-<ts>"), so the same old
+//     attempt upgraded on two different devices gets the SAME ID and will
+//     de-duplicate correctly when those devices sync.
+//   - v1 true/false "resolved" flags become LEGACY_TS timestamps.
+//   - v1 fullQuizUsageCount goes under a shared "legacy" key (merged later
+//     by taking the larger value, never summed, so copies can't inflate it).
+function normalizeProgress(p) {
+  const out = emptyProgress();
+  if (!p || typeof p !== "object" || !p.perQuestion || typeof p.perQuestion !== "object") return out;
+  const c = p.clears || {};
+  out.clears.seq = Number(c.seq) || 0;
+  if (c.tile && typeof c.tile === "object") {
+    Object.keys(c.tile).forEach(k => { out.clears.tile[k] = Number(c.tile[k]) || 0; });
+  }
+  Object.keys(p.perQuestion).forEach(qid => {
+    const r = p.perQuestion[qid];
+    if (!r || typeof r !== "object") return;
+    const rec = newQuestionRecord();
+    const seen = {};
+    (Array.isArray(r.attempts) ? r.attempts : []).forEach(a => {
+      if (!a || typeof a.ts !== "number") return;
+      let id = a.id;
+      if (id) {
+        if (seen[id]) return;                 // true duplicate -- drop it
+      } else {
+        id = "L-" + qid + "-" + a.ts;
+        let n = 2;
+        while (seen[id]) id = "L-" + qid + "-" + a.ts + "-" + (n++);
+      }
+      seen[id] = true;
+      rec.attempts.push({ id: id, correct: !!a.correct, ts: a.ts });
+    });
+    rec.attempts.sort((x, y) => x.ts - y.ts);
+    rec.attempts = rec.attempts.slice(-ATTEMPT_HISTORY_MAX);
+    rec.seqDoneAt  = Number(r.seqDoneAt)  || (r.resolvedInSequential ? LEGACY_TS : 0);
+    rec.tileDoneAt = Number(r.tileDoneAt) || (r.resolvedInTileDrill  ? LEGACY_TS : 0);
+    if (r.fullQuizUsage && typeof r.fullQuizUsage === "object") {
+      Object.keys(r.fullQuizUsage).forEach(k => {
+        const v = Number(r.fullQuizUsage[k]) || 0;
+        if (v > 0) rec.fullQuizUsage[k] = v;
+      });
+    } else if (Number(r.fullQuizUsageCount) > 0) {
+      rec.fullQuizUsage.legacy = Number(r.fullQuizUsageCount);
+    }
+    out.perQuestion[qid] = rec;
+  });
+  return out;
+}
 
 function loadProgress() {
+  let raw = null, parsed = null;
   try {
-    const raw = localStorage.getItem(PROGRESS_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (parsed && typeof parsed === "object" && parsed.perQuestion) return parsed;
+    raw = localStorage.getItem(PROGRESS_KEY);
+    parsed = raw ? JSON.parse(raw) : null;
   } catch (e) {}
-  return { version: 1, perQuestion: {} };
+  if (!parsed || typeof parsed !== "object") return emptyProgress();
+  if (parsed.version === PROGRESS_VERSION && parsed.perQuestion && parsed.clears && parsed.clears.tile) return parsed;
+  // One-time upgrade. Keep the original v1 data as a safety net first.
+  try {
+    if (raw && !localStorage.getItem(PROGRESS_BACKUP_KEY)) localStorage.setItem(PROGRESS_BACKUP_KEY, raw);
+  } catch (e) {}
+  const upgraded = normalizeProgress(parsed);
+  saveProgress(upgraded);
+  return upgraded;
 }
 
 function saveProgress(progress) {
   try { localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress)); } catch (e) {}
 }
 
-// Wipes every kind of local progress this app tracks: Sequential Review
-// position, per-system tile-drill completion, the Full Quiz fairness
-// rotation (fullQuizUsageCount), and any in-progress 50-Question Test —
-// everything reads back to 0%/fresh afterward. Confirmed first since
-// there's no export prompt in this flow and it can't be undone once
-// clicked through.
+// Question id -> system id lookup (built once, on first use).
+let _qidToSys = null;
+function systemOfQuestion(qid) {
+  if (!_qidToSys) {
+    _qidToSys = {};
+    Object.keys(QUESTIONS).forEach(sysId => {
+      (QUESTIONS[sysId] || []).forEach(q => { _qidToSys[q.id] = sysId; });
+    });
+  }
+  return _qidToSys[qid];
+}
+
+// "Done" = resolved after the most recent clear of that scope.
+function isSeqDone(progress, rec) {
+  return !!rec && (rec.seqDoneAt || 0) > (progress.clears.seq || 0);
+}
+function isTileDone(progress, rec, sysId) {
+  return !!rec && (rec.tileDoneAt || 0) > (progress.clears.tile[sysId] || 0);
+}
+
 // Scoped deliberately to tile-drill completion only — Sequential Review
 // keeps its own position (it has its own Start Over already) and the
 // 50-Question Test keeps its fairness rotation and any in-progress attempt
 // untouched. This button lives under the system tiles, so it should only
 // reset what those tiles track, not torch unrelated progress someone
-// wasn't trying to touch.
+// wasn't trying to touch. In format v2 a reset is recorded as a timestamp
+// per system (clears.tile) rather than by flipping flags, so it covers
+// every question -- including ones another device resolved -- and will
+// win over older progress when devices sync.
 function resetSystemProgress() {
   const ok = confirm(
     "Reset progress for all system tiles?\n\nThis clears each system's tile-drill completion so every tile starts fresh from Q1 again. Sequential Review position and the 50-Question Test are not affected. This cannot be undone."
   );
   if (!ok) return;
   const progress = loadProgress();
-  Object.keys(progress.perQuestion).forEach(qid => {
-    if (progress.perQuestion[qid]) progress.perQuestion[qid].resolvedInTileDrill = false;
-  });
+  const now = Date.now();
+  SYSTEMS.forEach(sys => { if (!sys.isMenu) progress.clears.tile[sys.id] = now; });
   saveProgress(progress);
   clearAllTilePasses();
   buildHomeScreen();
@@ -2724,31 +2868,60 @@ function resetSystemProgress() {
 
 function markResolvedInSequential(qid) {
   const progress = loadProgress();
-  if (!progress.perQuestion[qid]) progress.perQuestion[qid] = { attempts: [], resolvedInSequential: false, resolvedInTileDrill: false };
-  progress.perQuestion[qid].resolvedInSequential = true;
+  const rec = ensureRecord(progress, qid);
+  // Always strictly after the last clear, even if the device clock has
+  // been set backward since.
+  rec.seqDoneAt = Math.max(Date.now(), (progress.clears.seq || 0) + 1);
   saveProgress(progress);
 }
 
 // Same "resolved" definition as Sequential Review (correct, or reached the
-// 3rd-wrong-attempt reveal) but kept as its own flag, tracked only while
-// drilling a system directly from its home-screen tile (quizMode ===
-// "system"). Deliberately separate from resolvedInSequential so drilling a
-// system via its tile doesn't cause Sequential Review to think that
-// question is already done (and vice versa) — see dev notes on the
-// staircase-completion flaw this was designed to avoid.
+// 3rd-wrong-attempt reveal) but kept as its own timestamp, tracked only
+// while drilling a system directly from its home-screen tile (quizMode ===
+// "system"). Deliberately separate from seqDoneAt so drilling a system via
+// its tile doesn't cause Sequential Review to think that question is
+// already done (and vice versa) — see dev notes on the staircase-
+// completion flaw this was designed to avoid.
 function markResolvedInTileDrill(qid) {
   const progress = loadProgress();
-  if (!progress.perQuestion[qid]) progress.perQuestion[qid] = { attempts: [], resolvedInSequential: false, resolvedInTileDrill: false };
-  progress.perQuestion[qid].resolvedInTileDrill = true;
+  const rec = ensureRecord(progress, qid);
+  const sysId = systemOfQuestion(qid);
+  rec.tileDoneAt = Math.max(Date.now(), (progress.clears.tile[sysId] || 0) + 1);
   saveProgress(progress);
 }
 
 function recordAttempt(qid, isCorrect) {
   const progress = loadProgress();
-  if (!progress.perQuestion[qid]) progress.perQuestion[qid] = { attempts: [], resolvedInSequential: false, resolvedInTileDrill: false };
-  progress.perQuestion[qid].attempts.push({ correct: isCorrect, ts: Date.now() });
-  if (progress.perQuestion[qid].attempts.length > 10) progress.perQuestion[qid].attempts.shift();
+  const rec = ensureRecord(progress, qid);
+  rec.attempts.push({ id: newRecordId(), correct: isCorrect, ts: Date.now() });
+  rec.attempts.sort((x, y) => x.ts - y.ts);
+  if (rec.attempts.length > ATTEMPT_HISTORY_MAX) rec.attempts = rec.attempts.slice(-ATTEMPT_HISTORY_MAX);
   saveProgress(progress);
+}
+
+// Stamps any saved pass (Sequential Review, a tile drill, or the
+// 50-Question Test) with the facts sync will need to decide between two
+// devices' versions: which pass it is (passId), when and why it began
+// (startedAt / startReason: "new", "restart", "newLap"), and when and on
+// which device it was last changed (updatedAt / updatedBy). Many save
+// call-sites rebuild the pass object without these fields, so they're
+// carried over from the previously stored version of the same pass. Only
+// the build functions create a new passId.
+function stampPass(pass, previous) {
+  if (!pass.passId) {
+    if (previous && previous.passId) {
+      pass.passId = previous.passId;
+      pass.startedAt = previous.startedAt;
+      pass.startReason = previous.startReason;
+    } else {
+      pass.passId = newRecordId();       // pass saved before format v2
+      pass.startedAt = LEGACY_TS;
+      pass.startReason = "legacy";
+    }
+  }
+  pass.updatedAt = Date.now();
+  pass.updatedBy = getDeviceId();
+  return pass;
 }
 
 // ==================== SYSTEM PROFICIENCY ====================
@@ -2796,28 +2969,38 @@ const FULL_QUIZ_DISTRIBUTION = {
 
 // Fairness usage counter — how many times a question has been DRAWN into a
 // generated Full Quiz set, regardless of whether that attempt was ever
-// finished. Lives in the same progress blob as everything else (so
-// export/import already covers it for free), keyed per question id.
+// finished. Lives in the same progress blob as everything else, keyed per
+// question id and, since format v2, per device ({ deviceId: count }) so
+// counts from different devices can be combined correctly during sync.
+// The total is the sum across devices.
 // Incrementing at draw-time (not completion-time) is deliberate: an
 // abandoned attempt still "used" that question's turn in the rotation.
+function usageTotal(rec) {
+  if (!rec || !rec.fullQuizUsage) return 0;
+  return Object.keys(rec.fullQuizUsage).reduce((sum, k) => sum + (Number(rec.fullQuizUsage[k]) || 0), 0);
+}
 function getFullQuizUsage(qid) {
-  const progress = loadProgress();
-  return (progress.perQuestion[qid] && progress.perQuestion[qid].fullQuizUsageCount) || 0;
+  return usageTotal(loadProgress().perQuestion[qid]);
 }
 function incrementFullQuizUsage(qid) {
   const progress = loadProgress();
-  if (!progress.perQuestion[qid]) progress.perQuestion[qid] = { attempts: [], resolvedInSequential: false, resolvedInTileDrill: false };
-  progress.perQuestion[qid].fullQuizUsageCount = (progress.perQuestion[qid].fullQuizUsageCount || 0) + 1;
+  const rec = ensureRecord(progress, qid);
+  const dev = getDeviceId();
+  rec.fullQuizUsage[dev] = (Number(rec.fullQuizUsage[dev]) || 0) + 1;
   saveProgress(progress);
 }
 
 // Picks `count` least-used questions from a system's bank. Ties (equal
 // usage count) are broken randomly rather than by id order — shuffle the
 // whole pool first, then a stable sort by usage count preserves that
-// shuffled order within each usage tier.
+// shuffled order within each usage tier. Usage is read once up front
+// rather than re-reading storage inside the sort comparator.
 function pickLeastUsedQuestions(sysId, count) {
+  const progress = loadProgress();
   const pool = shuffleArray((QUESTIONS[sysId] || []).slice());
-  pool.sort((a, b) => getFullQuizUsage(a.id) - getFullQuizUsage(b.id));
+  const usage = {};
+  pool.forEach(q => { usage[q.id] = usageTotal(progress.perQuestion[q.id]); });
+  pool.sort((a, b) => usage[a.id] - usage[b.id]);
   return pool.slice(0, count);
 }
 
@@ -2859,6 +3042,7 @@ function loadFullQuizState() {
   } catch (e) { return null; }
 }
 function saveFullQuizState(state) {
+  stampPass(state, loadFullQuizState());
   try { localStorage.setItem(FULLQUIZ_KEY, JSON.stringify(state)); } catch (e) {}
 }
 function clearFullQuizState() {
@@ -2893,9 +3077,12 @@ function loadSequentialPass() {
   return null;
 }
 function saveSequentialPass(pass) {
+  let previous = null;
+  try { const raw = localStorage.getItem(SEQPASS_KEY); previous = raw ? JSON.parse(raw) : null; } catch (e) {}
+  stampPass(pass, previous);
   try { localStorage.setItem(SEQPASS_KEY, JSON.stringify(pass)); } catch (e) {}
 }
-function buildSequentialPass() {
+function buildSequentialPass(reason) {
   const list = [];
   SYSTEMS.forEach(sys => {
     if (sys.isMenu) return;
@@ -2907,15 +3094,17 @@ function buildSequentialPass() {
       list.push(Object.assign({}, q, { options: newOptions, correct: newCorrect, _sys: sys.id }));
     });
   });
-  const pass = { questions: list, currentIndex: 0, inProgress: null, answers: [] };
+  const pass = { passId: newRecordId(), startedAt: Date.now(), startReason: reason || "new",
+                 questions: list, currentIndex: 0, inProgress: null, answers: [] };
   saveSequentialPass(pass);
   return pass;
 }
+// Sequential Review Start Over. Recorded as a single timestamp (format
+// v2) rather than by flipping every question's flag, so it also covers
+// questions resolved on another device before this moment.
 function resetSequentialProgressFlags() {
   const progress = loadProgress();
-  SEQUENTIAL_QUESTIONS.forEach(q => {
-    if (progress.perQuestion[q.id]) progress.perQuestion[q.id].resolvedInSequential = false;
-  });
+  progress.clears.seq = Date.now();
   saveProgress(progress);
 }
 
@@ -2941,13 +3130,14 @@ function loadTilePass(sysId) {
 }
 function saveTilePass(sysId, pass) {
   const all = loadAllTilePasses();
+  stampPass(pass, all[sysId]);
   all[sysId] = pass;
   saveAllTilePasses(all);
 }
 function clearAllTilePasses() {
   try { localStorage.removeItem(TILEPASS_KEY); } catch (e) {}
 }
-function buildTilePass(sysId) {
+function buildTilePass(sysId, reason) {
   const bank = shuffleArray((QUESTIONS[sysId] || []).slice());
   const questions = bank.map(q => {
     const indices = shuffleArray([0, 1, 2, 3]);
@@ -2955,13 +3145,14 @@ function buildTilePass(sysId) {
     const newCorrect = indices.indexOf(q.correct);
     return Object.assign({}, q, { options: newOptions, correct: newCorrect, _sys: sysId });
   });
-  const pass = { questions: questions, currentIndex: 0, inProgress: null, answers: [] };
+  const pass = { passId: newRecordId(), startedAt: Date.now(), startReason: reason || "new",
+                 questions: questions, currentIndex: 0, inProgress: null, answers: [] };
   saveTilePass(sysId, pass);
   return pass;
 }
 
 // How much of the Sequential Review has been resolved, overall and per
-// system. Based on the same resolvedInSequential flags used for the resume
+// system. Based on the same seqDoneAt timestamps used for the resume
 // prompt — this is completion, not mastery (mastery/rolling-window scoring
 // is a separate, not-yet-built feature that needs the topic-group tier).
 function getOverallCompletion() {
@@ -2969,7 +3160,7 @@ function getOverallCompletion() {
   let resolved = 0;
   SEQUENTIAL_QUESTIONS.forEach(q => {
     const rec = progress.perQuestion[q.id];
-    if (rec && rec.resolvedInSequential) resolved++;
+    if (isSeqDone(progress, rec)) resolved++;
   });
   const total = SEQUENTIAL_QUESTIONS.length;
   return { resolved, total, pct: total ? Math.round((resolved / total) * 100) : 0 };
@@ -3009,13 +3200,13 @@ function getSystemCompletion(sysId) {
     if (q._sys !== sysId) return;
     total++;
     const rec = progress.perQuestion[q.id];
-    if (rec && rec.resolvedInSequential) resolved++;
+    if (isSeqDone(progress, rec)) resolved++;
   });
   return { resolved, total, pct: total ? Math.round((resolved / total) * 100) : 0 };
 }
 
 // Completion for the Progress by System screen — sourced from direct
-// tile-drilling (resolvedInTileDrill) rather than Sequential Review
+// tile-drilling (tileDoneAt) rather than Sequential Review
 // position, so a system doesn't read 0% just because Sequential Review
 // hasn't reached it yet. Reads straight from QUESTIONS[sysId] rather than
 // SEQUENTIAL_QUESTIONS since it has no need for ground-school ordering.
@@ -3025,7 +3216,7 @@ function getSystemTileDrillCompletion(sysId) {
   let resolved = 0;
   bank.forEach(q => {
     const rec = progress.perQuestion[q.id];
-    if (rec && rec.resolvedInTileDrill) resolved++;
+    if (isTileDone(progress, rec, sysId)) resolved++;
   });
   const total = bank.length;
   return { resolved, total, pct: total ? Math.round((resolved / total) * 100) : 0 };
@@ -3079,7 +3270,7 @@ function importProgressFile(file) {
     try {
       const parsed = JSON.parse(e.target.result);
       if (parsed && typeof parsed === "object" && parsed.perQuestion) {
-        saveProgress(parsed);
+        saveProgress(normalizeProgress(parsed));
         alert("Progress loaded from file.");
       } else {
         alert("That file doesn't look like a progress export.");
@@ -3219,43 +3410,15 @@ function shuffleArray(arr) {
 // here — rather than a resume prompt — is deliberate: once every question
 // in the bank has been answered, there's nothing left to resume to, so
 // drilling the tile again should just start another random review lap.
-async function startSystemQuiz(sysId) {
+function startSystemQuiz(sysId) {
   const sys = SYSTEMS.find(s => s.id === sysId);
   if (!sys || !sys.live) return;
-
-  // Entry-boundary reconciliation: if Dexie already has an established
-  // synchronized review for this system, reconstruct its exact native tile
-  // pass before the ordinary Start/Resume decision. A synthetic untouched
-  // generation-0 review has no frozenPresentation, so it installs nothing
-  // and preserves the native fresh-shuffle behavior.
-  let inbound = null;
-  try {
-    if (typeof window.jshInstallInboundSystemTileState === "function") {
-      inbound = await window.jshInstallInboundSystemTileState(sysId);
-    }
-  } catch (error) {
-    console.error(
-      "Jet Schoolhouse System Tiles entry reconciliation failed:",
-      error
-    );
-  }
 
   const saved = loadTilePass(sysId);
   if (saved && saved.currentIndex > 0 && saved.currentIndex < saved.questions.length) {
     showResumePrompt(saved.currentIndex, false, "system", sysId);
-  } else if (
-    inbound &&
-    inbound.installed &&
-    saved &&
-    saved.currentIndex === 0
-  ) {
-    // An established synchronized Q1 pass must keep its frozen question and
-    // option order. This path is deliberately distinct from an ordinary
-    // pristine Q1 entry and from explicit Start Over, both of which continue
-    // to call beginSystemQuizAt(sysId, 0) without preservation.
-    beginSystemQuizAt(sysId, 0, true);
   } else {
-    beginSystemQuizAt(sysId, 0);
+    beginSystemQuizAt(sysId, 0, (saved && saved.currentIndex >= saved.questions.length) ? "newLap" : "new");
   }
 }
 
@@ -3267,13 +3430,11 @@ async function startSystemQuiz(sysId) {
 // exact saved order rather than reshuffle it (loadTilePass falls back to
 // building fresh only as a safety net, e.g. if storage was cleared
 // mid-session).
-function beginSystemQuizAt(sysId, index, preserveSavedAtZero) {
+function beginSystemQuizAt(sysId, index, reason) {
   const sys = SYSTEMS.find(s => s.id === sysId);
   currentSystem = sysId;
   quizMode = "system";
-  const pass = (index === 0 && !preserveSavedAtZero)
-    ? buildTilePass(sysId)
-    : (loadTilePass(sysId) || buildTilePass(sysId));
+  const pass = (index === 0) ? buildTilePass(sysId, reason) : (loadTilePass(sysId) || buildTilePass(sysId, "new"));
   currentQuiz = pass.questions;
   currentIndex = index;
   answers = (pass.answers || []).slice();
@@ -3284,25 +3445,7 @@ function beginSystemQuizAt(sysId, index, preserveSavedAtZero) {
   renderQuestion();
 }
 
-async function startFullQuiz() {
-  // Entry-boundary reconciliation: if Dexie already has a synchronized
-  // Full Quiz pass, reconstruct it into the native G550 persistence record
-  // before the native Start/Resume decision is made.  The native G550
-  // program remains authoritative for what happens next.
-  try {
-    await window.jshInstallInboundFullQuizState();
-  } catch (error) {
-    if (
-      !error ||
-      error.message !== "No synchronized Full Quiz pass is available."
-    ) {
-      console.error(
-        "Jet Schoolhouse Full Quiz entry reconciliation failed:",
-        error
-      );
-    }
-  }
-
+function startFullQuiz() {
   const saved = loadFullQuizState();
   if (saved) {
     showResumePrompt(0, false, "full");
@@ -3317,7 +3460,8 @@ function beginFullQuizFresh() {
   currentSystem = "";
   currentQuiz = generateFullQuizSet();
   currentIndex = 0; answers = [];
-  saveFullQuizState({ questions: currentQuiz, currentIndex: 0, answers: [], phase: "quiz", missedList: null, reviewIndex: null });
+  saveFullQuizState({ passId: newRecordId(), startedAt: Date.now(), startReason: "new",
+                      questions: currentQuiz, currentIndex: 0, answers: [], phase: "quiz", missedList: null, reviewIndex: null });
   document.getElementById("quiz-title").textContent = "50-Question Test";
   showScreen("quiz-screen");
   renderQuestion();
@@ -3356,36 +3500,12 @@ function resumeFullQuizReview(saved) {
   renderReviewQuestion();
 }
 
-async function startSequential() {
-  // Entry-boundary reconciliation: install the active synchronized Sequential
-  // pass before native G550 decides whether this is a fresh start or resume.
-  let inbound = null;
-  try {
-    if (typeof window.jshInstallInboundSequentialState === "function") {
-      inbound = await window.jshInstallInboundSequentialState();
-    }
-  } catch (error) {
-    console.error(
-      "Jet Schoolhouse Sequential entry reconciliation failed:",
-      error
-    );
-  }
-
+function startSequential() {
   const saved = loadSequentialPass();
   if (saved && saved.currentIndex >= saved.questions.length) {
     showResumePrompt(0, true);
   } else if (saved && saved.currentIndex > 0) {
     showResumePrompt(saved.currentIndex, false);
-  } else if (
-    inbound &&
-    inbound.installed &&
-    saved &&
-    saved.currentIndex === 0
-  ) {
-    // Preserve a synchronized Q1 pass exactly. A resolved or partially
-    // attempted Q1 must not be replaced by beginSequentialAt(0)'s fresh
-    // shuffle merely because its currentIndex is still zero.
-    beginSequentialAt(0, true);
   } else {
     beginSequentialAt(0);
   }
@@ -3419,15 +3539,7 @@ function showResumePrompt(resumeIndex, isComplete, mode, sysId) {
     };
     restartBtn.onclick = () => {
       document.getElementById("resume-prompt").style.display = "none";
-
-      // Prototype 9J adapter observation only.
-      // Distinguishes explicit System Tiles Start Over from ordinary
-      // index-0 re-entry without making native G550 behavior depend on Dexie.
-      if (typeof window.jshSignalSystemTileRestart === "function") {
-        window.jshSignalSystemTileRestart(sysId);
-      }
-
-      beginSystemQuizAt(sysId, 0);
+      beginSystemQuizAt(sysId, 0, "restart");
     };
 
     document.getElementById("resume-prompt").style.display = "flex";
@@ -3482,21 +3594,7 @@ function showResumePrompt(resumeIndex, isComplete, mode, sysId) {
 
     restartBtn.onclick = () => {
       document.getElementById("resume-prompt").style.display = "none";
-
-      // Prototype 9G adapter observation only.
-      // Distinguishes explicit Full Quiz replacement from initial creation/resume.
-      if (typeof window.jshSignalFullQuizRestart === "function") {
-        window.jshSignalFullQuizRestart();
-      }
-
       beginFullQuizFresh();
-
-      // Prototype 9G adapter observation only.
-      // Confirms that native Full Quiz fresh creation returned to its caller.
-      // The adapter must still validate the persisted replacement state.
-      if (typeof window.jshSignalFullQuizRestartCompleted === "function") {
-        window.jshSignalFullQuizRestartCompleted();
-      }
     };
 
     document.getElementById("resume-prompt").style.display = "flex";
@@ -3522,15 +3620,8 @@ function showResumePrompt(resumeIndex, isComplete, mode, sysId) {
   };
   restartBtn.onclick = () => {
     document.getElementById("resume-prompt").style.display = "none";
-
-    // Prototype 9E adapter observation only.
-    // Distinguishes explicit Start Over from ordinary index-0 re-entry.
-    if (typeof window.jshSignalSequentialRestart === "function") {
-      window.jshSignalSequentialRestart();
-    }
-
     resetSequentialProgressFlags();
-    beginSequentialAt(0);
+    beginSequentialAt(0, "restart");
   };
 
   document.getElementById("resume-prompt").style.display = "flex";
@@ -3538,16 +3629,14 @@ function showResumePrompt(resumeIndex, isComplete, mode, sysId) {
 
 // index === 0 always means "begin a pass from its start" — a fresh first
 // visit, or Start Over — so it always shuffles a new pass (and, via the
-// restart button above, only ever runs after resolvedInSequential has
+// restart button above, only ever runs after the Sequential clear time has
 // just been reset, so a new pass's resume tracking starts from a clean
 // slate). Any other index only ever comes from the resume prompt's
 // "Continue" button and must reuse the exact saved order rather than
 // reshuffle it (loadSequentialPass falls back to building fresh only as a
 // safety net).
-function beginSequentialAt(index, preserveSavedAtZero) {
-  const pass = (index === 0 && !preserveSavedAtZero)
-    ? buildSequentialPass()
-    : (loadSequentialPass() || buildSequentialPass());
+function beginSequentialAt(index, reason) {
+  const pass = (index === 0) ? buildSequentialPass(reason) : (loadSequentialPass() || buildSequentialPass("new"));
   quizMode = "sequential";
   currentSystem = "";
   currentQuiz = pass.questions;
@@ -4256,10 +4345,6 @@ function persistPassPosition(inProgress, index) {
 function selectAnswer(chosen) {
   const q = currentQuiz[currentIndex];
   const isCorrect = chosen === q.correct;
-  const jshSequentialAnswerTimestamp = quizMode === "sequential" ? Date.now() : null;
-  const jshSequentialAnswerQuestions = quizMode === "sequential" ? structuredClone(currentQuiz) : null;
-  const jshSystemTileAnswerTimestamp = quizMode === "system" ? Date.now() : null;
-  const jshSystemTileAnswerQuestions = quizMode === "system" ? structuredClone(currentQuiz) : null;
   const hasSynoptic = !!q.synoptic;
   const hasRevealPhoto = !!q.revealPhoto;
   attemptCount++;
@@ -4285,7 +4370,7 @@ function selectAnswer(chosen) {
     if (hasRevealPhoto) showRevealPhoto(q);
     // Enable toggle buttons if this is a toggle question
     document.querySelectorAll(".toggle-btn").forEach(btn => { btn.disabled = false; });
-    answers.push({ qId: q.id, system: q._sys || currentSystem, isCorrect: true, attempts: attemptCount });
+    answers.push({ qId: q.id, system: q._sys || currentSystem, isCorrect: true, attempts: attemptCount, ts: Date.now() });
     const isLast = currentIndex === currentQuiz.length - 1;
     const resolvedState = { qid: q.id, resolved: true, isCorrect: true, attemptCount: attemptCount, wrong: wrongThisQuestion.slice() };
     if (quizMode === "sequential") {
@@ -4323,7 +4408,7 @@ function selectAnswer(chosen) {
       fb.className = "feedback-box explain";
       fb.textContent = "\u2717 The correct answer is " + ["A","B","C","D"][q.correct] + ". " + (q.explain || "");
 
-      answers.push({ qId: q.id, system: q._sys || currentSystem, isCorrect: false, attempts: attemptCount });
+      answers.push({ qId: q.id, system: q._sys || currentSystem, isCorrect: false, attempts: attemptCount, ts: Date.now() });
       const isLast = currentIndex === currentQuiz.length - 1;
       const resolvedState = { qid: q.id, resolved: true, isCorrect: false, attemptCount: attemptCount, wrong: wrongThisQuestion.slice() };
       if (quizMode === "sequential") { markResolvedInSequential(q.id); persistPassPosition(resolvedState, currentIndex); }
@@ -4356,33 +4441,6 @@ function selectAnswer(chosen) {
     }
   }
 
-  if (
-    quizMode === "sequential" &&
-    typeof window.jshSignalSequentialAnswer === "function"
-  ) {
-    window.jshSignalSequentialAnswer(
-      jshSequentialAnswerQuestions,
-      q.id,
-      isCorrect,
-      chosen,
-      jshSequentialAnswerTimestamp
-    );
-  }
-
-  if (
-    quizMode === "system" &&
-    typeof window.jshSignalSystemTileAnswer === "function"
-  ) {
-    window.jshSignalSystemTileAnswer(
-      q._sys || currentSystem,
-      jshSystemTileAnswerQuestions,
-      q.id,
-      isCorrect,
-      chosen,
-      jshSystemTileAnswerTimestamp
-    );
-  }
-
   fitAnswerIllustration();
   fitQuestionCard();
   updateSystemTitle(q, SYSTEMS.find(s => s.id === (q._sys || currentSystem))?.name || "");
@@ -4397,8 +4455,6 @@ function selectAnswer(chosen) {
 function selectAnswerFull(chosen) {
   const q = currentQuiz[currentIndex];
   const isCorrect = chosen === q.correct;
-  const jshFullQuizAnswerTimestamp = Date.now();
-  const jshFullQuizAnswerQuestions = structuredClone(currentQuiz);
   const btns = document.querySelectorAll(".option-btn");
   const fb = document.getElementById("feedback-box");
 
@@ -4421,7 +4477,7 @@ function selectAnswerFull(chosen) {
   }
 
   recordAttempt(q.id, isCorrect);
-  answers.push({ qId: q.id, system: q._sys, isCorrect: isCorrect, chosen: chosen, correct: q.correct });
+  answers.push({ qId: q.id, system: q._sys, isCorrect: isCorrect, chosen: chosen, correct: q.correct, ts: Date.now() });
 
   const isLast = currentIndex === currentQuiz.length - 1;
   const nextBtn = document.getElementById("next-btn");
@@ -4448,16 +4504,6 @@ function selectAnswerFull(chosen) {
     saveFullQuizState({ questions: currentQuiz, currentIndex: currentIndex + 1, answers: answers, phase: "quiz", missedList: null, reviewIndex: null });
   }
 
-  if (typeof window.jshSignalFullQuizAnswer === "function") {
-    window.jshSignalFullQuizAnswer(
-      jshFullQuizAnswerQuestions,
-      q.id,
-      isCorrect,
-      chosen,
-      jshFullQuizAnswerTimestamp
-    );
-  }
-
   fitQuestionCard();
 }
 
@@ -4465,19 +4511,6 @@ function prevQuestion() {
   if (currentIndex > 0) {
     currentIndex--;
     persistPassPosition(null);
-
-    if (
-      quizMode === "system" &&
-      typeof window.jshSignalSystemTilePosition === "function"
-    ) {
-      window.jshSignalSystemTilePosition(
-        currentSystem,
-        currentQuiz,
-        currentIndex,
-        Date.now()
-      );
-    }
-
     renderQuestion();
   }
 }
@@ -4487,18 +4520,6 @@ function nextQuestion() {
     saveFullQuizState({ questions: currentQuiz, currentIndex: currentIndex, answers: answers, phase: "quiz", missedList: null, reviewIndex: null });
   } else {
     persistPassPosition(null);
-
-    if (
-      quizMode === "system" &&
-      typeof window.jshSignalSystemTilePosition === "function"
-    ) {
-      window.jshSignalSystemTilePosition(
-        currentSystem,
-        currentQuiz,
-        currentIndex,
-        Date.now()
-      );
-    }
   }
   renderQuestion();
 }
@@ -4514,17 +4535,6 @@ function showResults() {
   // treated the same as interrupting on any other question, right up
   // until this point.
   persistPassPosition(null, currentQuiz.length);
-
-  if (
-    quizMode === "system" &&
-    typeof window.jshSignalSystemTileCompletion === "function"
-  ) {
-    window.jshSignalSystemTileCompletion(
-      currentSystem,
-      currentQuiz,
-      Date.now()
-    );
-  }
 
   document.getElementById("std-results-header").style.display = "";
   document.getElementById("sys-results-grid").style.display = "";
