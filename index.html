@@ -5446,9 +5446,20 @@ async function readBox() {
 
 let running = false;
 let lastNativeFingerprint = "";
+let reconcileRunNumber = 0;
+function syncDiag(stage, run) {
+  const entry = { run, stage, at: Date.now() };
+  window.jshBoxSyncDiagnostic = entry;
+  console.log(`[JSH SYNC DIAG ${run}] ${stage}`);
+}
 async function reconcile() {
-  if (running) return;
+  if (running) {
+    console.log(`[JSH SYNC DIAG] reconcile skipped — run already active`);
+    return;
+  }
   running = true;
+  const diagRun = ++reconcileRunNumber;
+  syncDiag("01 entered reconcile", diagRun);
   // Amber means synchronization has not yet been established, or a prior
   // synchronization attempt failed. Once healthy/green, routine background
   // reconciliation stays green unless this cycle proves a real problem.
@@ -5456,28 +5467,44 @@ async function reconcile() {
     setStatus(false, "Synchronizing device and Box");
   }
   try {
+    syncDiag("02 before captureNative local0", diagRun);
     const local0 = applyResetSemantics(captureNative());
+    syncDiag("03 after captureNative local0; before publish local0", diagRun);
     await publish(local0);
+    syncDiag("04 after publish local0; before first cloud.sync", diagRun);
     await jshBoxDb.cloud.sync();
+    syncDiag("05 after first cloud.sync; before first pull", diagRun);
     await jshBoxDb.cloud.sync({ purpose: "pull" });
+    syncDiag("06 after first pull; before readBox box1", diagRun);
 
     const box1 = await readBox();
+    syncDiag("07 after readBox box1; before mergeState", diagRun);
     const merged = applyResetSemantics(mergeState(local0, box1));
+    syncDiag("08 after mergeState; before installNative", diagRun);
     installNative(merged);
+    syncDiag("09 after installNative; before publish merged", diagRun);
     await publish(merged);
+    syncDiag("10 after publish merged; before second cloud.sync", diagRun);
     await jshBoxDb.cloud.sync();
+    syncDiag("11 after second cloud.sync; before second pull", diagRun);
     await jshBoxDb.cloud.sync({ purpose: "pull" });
+    syncDiag("12 after second pull; before final readBox", diagRun);
 
     const finalBox = await readBox();
+    syncDiag("13 after final readBox; before final captureNative", diagRun);
     const finalLocal = applyResetSemantics(captureNative());
+    syncDiag("14 after final captureNative; before fingerprint compare", diagRun);
     const agrees = fingerprint(finalLocal) === fingerprint(finalBox);
     lastNativeFingerprint = fingerprint(finalLocal);
     setStatus(agrees, agrees ? "Device and Box agree" : "Device and Box differ; another reconciliation is required");
+    syncDiag(agrees ? "15 completed — fingerprints agree" : "15 completed — fingerprints differ", diagRun);
   } catch (err) {
+    syncDiag("ERROR — " + (err?.message || String(err)), diagRun);
     console.error("Jet Schoolhouse Box Sync:", err);
     setStatus(false, "Synchronization incomplete: " + (err?.message || String(err)));
   } finally {
     running = false;
+    console.log(`[JSH SYNC DIAG ${diagRun}] finally — running cleared`);
   }
 }
 
@@ -5486,7 +5513,9 @@ window.jshBoxSync = {
   captureNative,
   readBox,
   mergeState,
-  get status() { return window.jshBoxSyncStatus; }
+  get status() { return window.jshBoxSyncStatus; },
+  get diagnostic() { return window.jshBoxSyncDiagnostic; },
+  get running() { return running; }
 };
 
 // Native G550 saves immediately to localStorage. Watch only for a real
