@@ -5525,8 +5525,7 @@ setInterval(() => {
   const now = fingerprint(applyResetSemantics(captureNative()));
   if (now !== lastNativeFingerprint) reconcile();
 }, 500);
-// TEST ONLY: 5-second reconciliation heartbeat disabled
-// setInterval(reconcile, 5000);
+setInterval(reconcile, 5000);
 
 ensureIndicator();
 reconcile();
